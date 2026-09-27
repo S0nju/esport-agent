@@ -1,0 +1,53 @@
+[project]
+name = "esport-agent"
+version = "0.1.0"
+description = "Conversational esports agent (LLM + tool calling) for League of Legends"
+readme = "README.md"
+authors = [
+    { name = "Kelian Ninet", email = "kelian.ninet@insa-rennes.fr" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "anthropic>=1.8.0",
+    "httpx>=0.28.1",
+    "mwrogue>=0.1.5",
+    "pydantic-settings>=2.15.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.19,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "mypy>=2.3.1",
+    "pre-commit>=4.6.2",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "ruff>=0.16.9",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "UP", "SIM", "RUF", "N", "C4", "PTH", "T20"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/esport_agent/cli.py" = ["T201"]
+
+[tool.mypy]
+strict = true
+python_version = "3.14"
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+# mwrogue ships no type annotations.
+module = ["mwrogue", "mwrogue.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
