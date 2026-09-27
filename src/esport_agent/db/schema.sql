@@ -1,0 +1,4 @@
+-- Local database schema, filled by sync.py and read by the tools.
+-- Tables will be defined once the actual format of the Leaguepedia and lolesports
+-- data has been checked. Every statement must be idempotent
+-- (CREATE TABLE IF NOT EXISTS ...).
