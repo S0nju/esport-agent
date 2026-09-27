@@ -7,12 +7,14 @@ from esport_agent.config import Settings
 
 def test_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    monkeypatch.setenv("LOLESPORTS_API_KEY", "lolesports-test")
     for var in ("CLAUDE_MODEL", "DEFAULT_TEAM", "SQLITE_PATH", "LEAGUEPEDIA_BOT_USERNAME"):
         monkeypatch.delenv(var, raising=False)
 
     settings = Settings(_env_file=None)
 
     assert settings.anthropic_api_key.get_secret_value() == "sk-test"
+    assert settings.lolesports_api_key.get_secret_value() == "lolesports-test"
     assert settings.claude_model == "claude-haiku-4-5-20251001"
     assert settings.default_team == "Karmine Corp"
     assert settings.leaguepedia_bot_username is None
@@ -22,6 +24,7 @@ def test_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_env_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    monkeypatch.setenv("LOLESPORTS_API_KEY", "lolesports-test")
     monkeypatch.setenv("DEFAULT_TEAM", "G2 Esports")
     monkeypatch.setenv("LEAGUEPEDIA_BOT_PASSWORD", "secret")
 
@@ -32,8 +35,11 @@ def test_env_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "secret" not in repr(settings)
 
 
-def test_api_key_is_required(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+@pytest.mark.parametrize("missing", ["ANTHROPIC_API_KEY", "LOLESPORTS_API_KEY"])
+def test_api_keys_are_required(monkeypatch: pytest.MonkeyPatch, missing: str) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    monkeypatch.setenv("LOLESPORTS_API_KEY", "lolesports-test")
+    monkeypatch.delenv(missing)
 
-    with pytest.raises(ValueError, match="anthropic_api_key"):
+    with pytest.raises(ValueError, match=missing.lower()):
         Settings(_env_file=None)

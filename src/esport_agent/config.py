@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     anthropic_api_key: SecretStr
+    lolesports_api_key: SecretStr
     claude_model: str = "claude-haiku-4-5-20251001"
     default_team: str = "Karmine Corp"
     leaguepedia_bot_username: str | None = None

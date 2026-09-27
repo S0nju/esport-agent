@@ -9,7 +9,9 @@ from esport_agent.db import connect, init_schema
 
 @pytest.fixture
 def settings() -> Settings:
-    return Settings(anthropic_api_key="test-key", _env_file=None)
+    return Settings(
+        anthropic_api_key="test-key", lolesports_api_key="test-lolesports-key", _env_file=None
+    )
 
 
 @pytest.fixture
