@@ -7,10 +7,11 @@ import anthropic
 import pytest
 
 from esport_agent import cli
-from esport_agent.agent import AgentError
+from esport_agent.agent import AgentError, Answer
 from esport_agent.cli import parse_tool_call, repl, tools_repl
 from esport_agent.config import Settings
 from esport_agent.db import connect, init_schema, replace_teams
+from esport_agent.usage import Usage
 from tests.factories import make_player, make_team
 
 
@@ -24,12 +25,15 @@ def test_repl_asks_agent_until_quit(
 ) -> None:
     feed_input(monkeypatch, "", "Next match?", "quit")
     agent = MagicMock()
-    agent.ask.return_value = "Saturday at 6 pm"
+    usage = Usage(model="claude-haiku-4-5", calls=1, input_tokens=1000, output_tokens=100)
+    agent.ask.return_value = Answer(text="Saturday at 6 pm", usage=usage)
 
     repl(agent)
 
     agent.ask.assert_called_once_with("Next match?")
-    assert "Saturday at 6 pm" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "Saturday at 6 pm" in output
+    assert "[claude-haiku-4-5 · 1 call · 1,000 in / 100 out tokens · ≈ $0.0015]" in output
 
 
 def test_repl_stops_on_eof(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -57,7 +61,7 @@ def test_repl_keeps_running_after_a_failed_question(
 ) -> None:
     feed_input(monkeypatch, "First?", "Second?", "quit")
     agent = MagicMock()
-    agent.ask.side_effect = [error, "Second answer"]
+    agent.ask.side_effect = [error, Answer(text="Second answer", usage=Usage())]
 
     repl(agent)
 
@@ -140,3 +144,18 @@ def test_main_tools_mode_needs_no_anthropic_key(
     cli.main(["--tools"])
 
     assert calls == [settings]
+
+
+def test_repl_shows_the_usage_of_a_failed_question(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    feed_input(monkeypatch, "Question?", "quit")
+    agent = MagicMock()
+    usage = Usage(model="claude-haiku-4-5", calls=6, input_tokens=9000, output_tokens=300)
+    agent.ask.side_effect = AgentError("No final answer", usage)
+
+    repl(agent)
+
+    output = capsys.readouterr().out
+    assert "Error: No final answer" in output
+    assert "[claude-haiku-4-5 · 6 calls" in output

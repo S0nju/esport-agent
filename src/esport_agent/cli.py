@@ -44,11 +44,18 @@ def repl(agent: Agent) -> None:
         if question.lower() in EXIT_COMMANDS:
             return
         try:
-            print(agent.ask(question))
+            answer = agent.ask(question)
         except KeyboardInterrupt:
             print("Interrupted.")
-        except (anthropic.APIError, AgentError) as exc:
+        except AgentError as exc:
             print(f"Error: {exc}")
+            if exc.usage is not None:
+                print(f"[{exc.usage.summary()}]")
+        except anthropic.APIError as exc:
+            print(f"Error: {exc}")
+        else:
+            print(answer.text)
+            print(f"[{answer.usage.summary()}]")
 
 
 def parse_tool_call(line: str) -> tuple[str, dict[str, object]]:
