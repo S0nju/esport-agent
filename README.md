@@ -7,6 +7,18 @@ Claude picks a tool, the tool reads a local SQLite database, and Claude writes t
 The MVP focuses on Karmine Corp (the default team), but the team is always a parameter.
 The agent will be exposed through a Discord bot; for now, only a test CLI exists.
 
+## What the agent can answer
+
+| Tool | Example question |
+|---|---|
+| `get_team_roster` | "Who plays for KC?" |
+| `get_team_next_match` | "When does G2 play next?" |
+| `get_team_recent_results` | "How did Karmine Corp do in its last 3 matches?" |
+
+Teams can be named by full name, short name or code ("Karmine Corp", "KC"). When a name
+is ambiguous ("Karmine" matches several teams), the agent asks which one you mean. Match
+times are shown in the `TIMEZONE` setting (Europe/Paris by default).
+
 ## Stack
 
 - Python 3.14, [uv](https://docs.astral.sh/uv/)
