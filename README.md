@@ -15,9 +15,14 @@ The agent will be exposed through a Discord bot; for now, only a test CLI exists
 | `get_team_next_match` | "When does G2 play next?" |
 | `get_team_recent_results` | "How did Karmine Corp do in its last 3 matches?" |
 
-Teams can be named by full name, short name or code ("Karmine Corp", "KC"). When a name
-is ambiguous ("Karmine" matches several teams), the agent asks which one you mean. Match
-times are shown in the `TIMEZONE` setting (Europe/Paris by default).
+Teams can be named by full name, short name or code ("Karmine Corp", "KC"). When a short
+name matches several teams, the one playing in `PREFERRED_LEAGUES` (the LEC by default) is
+picked: "Vitality" gives Team Vitality, not Vitality.Bee. If no preferred league settles it,
+the agent asks which team you mean. Match times are shown in the `TIMEZONE` setting
+(Europe/Paris by default).
+
+The agent answers in the language of the question, casually (it uses "tu" in French),
+concisely and only from the synced data.
 
 ## Stack
 
