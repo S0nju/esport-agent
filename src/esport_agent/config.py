@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     leaguepedia_bot_username: str | None = None
     leaguepedia_bot_password: SecretStr | None = None
     sqlite_path: Path = Path("esport_agent.db")
+    lolesports_leagues: list[str] = ["lec", "lfl", "worlds", "msi", "first_stand"]
+    """Slugs of the lolesports leagues whose schedule is synced."""
 
 
 @lru_cache
