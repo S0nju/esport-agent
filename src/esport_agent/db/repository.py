@@ -1,8 +1,8 @@
 """Reads and writes on the local database."""
 
 import sqlite3
-from collections.abc import Iterable
-from datetime import UTC
+from collections.abc import Collection, Iterable
+from datetime import UTC, datetime
 
 from esport_agent.db.records import MatchRecord, TeamRecord
 
@@ -63,7 +63,7 @@ def upsert_matches(conn: sqlite3.Connection, matches: Iterable[MatchRecord]) -> 
         [
             (
                 m.id,
-                m.start_time.astimezone(UTC).isoformat(),
+                _to_db_time(m.start_time),
                 m.state,
                 m.league_slug,
                 m.league_name,
@@ -81,3 +81,41 @@ def upsert_matches(conn: sqlite3.Connection, matches: Iterable[MatchRecord]) -> 
             for m in matches
         ],
     )
+
+
+def delete_stale_matches(
+    conn: sqlite3.Connection,
+    league_slug: str,
+    start: datetime,
+    end: datetime,
+    keep_ids: Collection[str],
+) -> int:
+    """Delete unfinished matches of a league that the source no longer returns.
+
+    Only matches scheduled between `start` and `end` (the period the source just returned)
+    are considered, so older history is never touched. This removes cancelled or
+    rescheduled-away matches that would otherwise stay "upcoming" forever. The caller owns
+    the transaction. Return the number of deleted matches.
+    """
+    # Only "?" placeholders are interpolated in the query, never values.
+    placeholders = ", ".join("?" * len(keep_ids))
+    cursor = conn.execute(
+        f"""
+        DELETE FROM matches
+        WHERE league_slug = ?
+            AND state != 'completed'
+            AND start_time BETWEEN ? AND ?
+            AND id NOT IN ({placeholders})
+        """,
+        (
+            league_slug,
+            _to_db_time(start),
+            _to_db_time(end),
+            *keep_ids,
+        ),
+    )
+    return cursor.rowcount
+
+
+def _to_db_time(value: datetime) -> str:
+    return value.astimezone(UTC).isoformat()

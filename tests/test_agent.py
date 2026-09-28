@@ -97,3 +97,19 @@ def test_too_many_tool_rounds(conn: sqlite3.Connection, settings: Settings) -> N
         pytest.raises(AgentError),
     ):
         agent.ask("Roster?")
+
+
+@pytest.mark.parametrize("stop_reason", ["end_turn", "max_tokens", "refusal"])
+def test_empty_answer_raises(
+    conn: sqlite3.Connection, settings: Settings, stop_reason: str
+) -> None:
+    agent = make_agent(conn, settings, make_message([], stop_reason))
+
+    with pytest.raises(AgentError, match=stop_reason):
+        agent.ask("Hi")
+
+
+def test_truncated_answer_is_returned(conn: sqlite3.Connection, settings: Settings) -> None:
+    agent = make_agent(conn, settings, make_message([text("Partial answer")], "max_tokens"))
+
+    assert agent.ask("Hi") == "Partial answer"

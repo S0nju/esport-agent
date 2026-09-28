@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 import httpx
 
-from esport_agent.config import get_settings
+from esport_agent.config import MissingSettingError, get_settings, require_secret
 from esport_agent.data.lolesports import Event, LolesportsClient, Team
 from esport_agent.db import (
     MatchRecord,
@@ -22,6 +22,7 @@ from esport_agent.db import (
     PlayerRecord,
     TeamRecord,
     connect,
+    delete_stale_matches,
     init_schema,
     replace_teams,
     upsert_matches,
@@ -39,9 +40,23 @@ HTTP_TIMEOUT_SECONDS = 60.0
 class SyncStats:
     teams: int
     matches: int
+    deleted_matches: int = 0
 
 
 def to_team_record(team: Team) -> TeamRecord:
+    """Convert a team, keeping only the first occurrence of each player."""
+    players: dict[str, PlayerRecord] = {}
+    for p in team.players:
+        if p.id in players:
+            logger.warning("Duplicate player %s in team %s, skipped", p.id, team.slug)
+            continue
+        players[p.id] = PlayerRecord(
+            id=p.id,
+            summoner_name=p.summoner_name,
+            first_name=p.first_name,
+            last_name=p.last_name,
+            role=p.role,
+        )
     return TeamRecord(
         id=team.id,
         slug=team.slug,
@@ -49,17 +64,19 @@ def to_team_record(team: Team) -> TeamRecord:
         code=team.code,
         status=team.status,
         home_league=team.home_league.name if team.home_league else None,
-        players=tuple(
-            PlayerRecord(
-                id=p.id,
-                summoner_name=p.summoner_name,
-                first_name=p.first_name,
-                last_name=p.last_name,
-                role=p.role,
-            )
-            for p in team.players
-        ),
+        players=tuple(players.values()),
     )
+
+
+def to_team_records(teams: list[Team]) -> list[TeamRecord]:
+    """Convert teams, keeping only the first occurrence of each team id."""
+    records: dict[str, TeamRecord] = {}
+    for team in teams:
+        if team.id in records:
+            logger.warning("Duplicate team %s (%s), skipped", team.id, team.slug)
+            continue
+        records[team.id] = to_team_record(team)
+    return list(records.values())
 
 
 def to_match_record(event: Event) -> MatchRecord | None:
@@ -109,36 +126,55 @@ def run_sync(
     """Fetch teams and the schedule of `league_slugs`, then write them in one transaction.
 
     Everything is fetched before anything is written, so a failing API call leaves the
-    database untouched.
+    database untouched. Unfinished matches that a league's schedule no longer returns
+    (cancelled, moved to another league) are deleted.
     """
     league_ids = {league.slug: league.id for league in client.get_leagues()}
     unknown = [slug for slug in league_slugs if slug not in league_ids]
     if unknown:
         logger.warning("Unknown lolesports leagues, skipped: %s", ", ".join(unknown))
 
-    teams = [to_team_record(team) for team in client.get_teams()]
-    matches: dict[str, MatchRecord] = {}
+    teams = to_team_records(client.get_teams())
+    schedules: dict[str, list[MatchRecord]] = {}
     for slug in league_slugs:
         if slug in league_ids:
-            for match in fetch_league_matches(client, league_ids[slug]):
-                matches[match.id] = match
+            schedules[slug] = fetch_league_matches(client, league_ids[slug])
             logger.info("Fetched schedule of %s", slug)
+    matches = {match.id: match for records in schedules.values() for match in records}
 
+    deleted = 0
     with conn:
         replace_teams(conn, teams)
         upsert_matches(conn, matches.values())
-    return SyncStats(teams=len(teams), matches=len(matches))
+        for records in schedules.values():
+            # Group by the slug stored on the matches, which is what the query filters on.
+            for league_slug in {m.league_slug for m in records}:
+                league_matches = [m for m in records if m.league_slug == league_slug]
+                deleted += delete_stale_matches(
+                    conn,
+                    league_slug,
+                    start=min(m.start_time for m in league_matches),
+                    end=max(m.start_time for m in league_matches),
+                    keep_ids={m.id for m in league_matches},
+                )
+    if deleted:
+        logger.info("Deleted %d cancelled or moved matches", deleted)
+    return SyncStats(teams=len(teams), matches=len(matches), deleted_matches=deleted)
 
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     settings = get_settings()
+    try:
+        api_key = require_secret(settings.lolesports_api_key, "LOLESPORTS_API_KEY")
+    except MissingSettingError as exc:
+        raise SystemExit(str(exc)) from exc
     with (
         closing(connect(settings.sqlite_path)) as conn,
         httpx.Client(timeout=HTTP_TIMEOUT_SECONDS) as http,
     ):
         init_schema(conn)
-        client = LolesportsClient(http, settings.lolesports_api_key.get_secret_value())
+        client = LolesportsClient(http, api_key)
         stats = run_sync(conn, client, settings.lolesports_leagues)
     logger.info(
         "Synced %d teams and %d matches into %s", stats.teams, stats.matches, settings.sqlite_path

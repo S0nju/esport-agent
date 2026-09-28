@@ -2,7 +2,7 @@
 
 from esport_agent.db.connection import connect, init_schema
 from esport_agent.db.records import MatchRecord, MatchSide, PlayerRecord, TeamRecord
-from esport_agent.db.repository import replace_teams, upsert_matches
+from esport_agent.db.repository import delete_stale_matches, replace_teams, upsert_matches
 
 __all__ = [
     "MatchRecord",
@@ -10,6 +10,7 @@ __all__ = [
     "PlayerRecord",
     "TeamRecord",
     "connect",
+    "delete_stale_matches",
     "init_schema",
     "replace_teams",
     "upsert_matches",

@@ -8,8 +8,10 @@ from typing import Any
 import httpx
 import pytest
 
-from esport_agent.data.lolesports import Event, LolesportsClient
-from esport_agent.sync import run_sync, to_match_record
+from esport_agent import sync
+from esport_agent.config import Settings
+from esport_agent.data.lolesports import Event, LolesportsClient, Team
+from esport_agent.sync import run_sync, to_match_record, to_team_records
 
 FIXTURES = Path(__file__).parent / "fixtures" / "lolesports"
 LEC_ID = "98767991302996019"
@@ -136,3 +138,89 @@ def test_to_match_record_only_sets_best_of_for_best_of_formats() -> None:
 
     assert record is not None
     assert record.best_of is None
+
+
+def test_run_sync_deletes_cancelled_upcoming_matches(conn: sqlite3.Connection) -> None:
+    def lec_event(match_id: str, start_time: str, state: str) -> dict[str, Any]:
+        template = load("get_schedule.json")["data"]["schedule"]["events"][0]
+        return {
+            **template,
+            "startTime": start_time,
+            "state": state,
+            "match": {**template["match"], "id": match_id},
+        }
+
+    def schedule_with(*events: dict[str, Any]) -> dict[str, Any]:
+        payload = load("get_schedule.json")
+        payload["data"]["schedule"]["events"] = list(events)
+        return payload
+
+    first = lec_event("first", "2026-10-01T15:00:00Z", "unstarted")
+    cancelled = lec_event("cancelled", "2026-10-02T15:00:00Z", "unstarted")
+    last = lec_event("last", "2026-10-03T15:00:00Z", "unstarted")
+    run_sync(conn, make_client({None: schedule_with(first, cancelled, last)}), ["lec"])
+
+    stats = run_sync(conn, make_client({None: schedule_with(first, last)}), ["lec"])
+
+    assert stats.deleted_matches == 1
+    ids = {row["id"] for row in conn.execute("SELECT id FROM matches")}
+    assert ids == {"first", "last"}
+
+
+def test_run_sync_keeps_completed_matches_missing_from_the_source(
+    conn: sqlite3.Connection,
+) -> None:
+    run_sync(conn, make_client(), ["lec"])
+    schedule = load("get_schedule.json")
+    events = schedule["data"]["schedule"]["events"]
+    completed = next(e for e in events if e["state"] == "completed")
+    events.remove(completed)
+
+    stats = run_sync(conn, make_client({None: schedule}), ["lec"])
+
+    assert stats.deleted_matches == 0
+    assert conn.execute("SELECT count(*) FROM matches").fetchone()[0] == 3
+
+
+def test_to_team_records_skips_duplicate_teams_and_players(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    raw = load("get_teams.json")["data"]["teams"]
+    kc = Team.model_validate(next(t for t in raw if t["slug"] == "karmine-corp"))
+    kc_with_duplicate_player = kc.model_copy(update={"players": [*kc.players, kc.players[0]]})
+
+    with caplog.at_level(logging.WARNING):
+        records = to_team_records([kc_with_duplicate_player, kc])
+
+    assert len(records) == 1
+    assert len(records[0].players) == len(kc.players)
+    assert "Duplicate player" in caplog.text
+    assert "Duplicate team" in caplog.text
+
+
+def test_run_sync_survives_duplicates_in_the_source(conn: sqlite3.Connection) -> None:
+    teams = load("get_teams.json")
+    teams["data"]["teams"].append(teams["data"]["teams"][0])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        endpoint = request.url.path.rsplit("/", 1)[-1]
+        payloads = {
+            "getLeagues": load("get_leagues.json"),
+            "getTeams": teams,
+            "getSchedule": load("get_schedule.json"),
+        }
+        return httpx.Response(200, json=payloads[endpoint])
+
+    client = LolesportsClient(httpx.Client(transport=httpx.MockTransport(handler)), "key")
+
+    stats = run_sync(conn, client, ["lec"])
+
+    assert stats.teams == 4
+
+
+def test_main_requires_the_lolesports_key(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    settings = Settings(_env_file=None, lolesports_api_key=None, sqlite_path=tmp_path / "db")
+    monkeypatch.setattr(sync, "get_settings", lambda: settings)
+
+    with pytest.raises(SystemExit, match="LOLESPORTS_API_KEY"):
+        sync.main()

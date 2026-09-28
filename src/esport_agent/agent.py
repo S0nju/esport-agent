@@ -50,9 +50,12 @@ class Agent:
                 messages=messages,
             )
             if response.stop_reason != "tool_use":
+                answer = "".join(b.text for b in response.content if b.type == "text").strip()
+                if not answer:
+                    raise AgentError(f"Empty answer (stop_reason={response.stop_reason})")
                 if response.stop_reason != "end_turn":
                     logger.warning("Answer cut short: stop_reason=%s", response.stop_reason)
-                return "".join(block.text for block in response.content if block.type == "text")
+                return answer
 
             messages.append({"role": "assistant", "content": response.content})
             results: list[ToolResultBlockParam] = []

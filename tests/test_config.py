@@ -1,8 +1,9 @@
 from pathlib import Path
 
 import pytest
+from pydantic import SecretStr
 
-from esport_agent.config import Settings
+from esport_agent.config import MissingSettingError, Settings, require_secret
 
 
 def test_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -19,8 +20,8 @@ def test_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
 
     settings = Settings(_env_file=None)
 
-    assert settings.anthropic_api_key.get_secret_value() == "sk-test"
-    assert settings.lolesports_api_key.get_secret_value() == "lolesports-test"
+    assert require_secret(settings.anthropic_api_key, "ANTHROPIC_API_KEY") == "sk-test"
+    assert require_secret(settings.lolesports_api_key, "LOLESPORTS_API_KEY") == "lolesports-test"
     assert settings.claude_model == "claude-haiku-4-5-20251001"
     assert settings.default_team == "Karmine Corp"
     assert settings.leaguepedia_bot_username is None
@@ -44,11 +45,20 @@ def test_env_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "secret" not in repr(settings)
 
 
-@pytest.mark.parametrize("missing", ["ANTHROPIC_API_KEY", "LOLESPORTS_API_KEY"])
-def test_api_keys_are_required(monkeypatch: pytest.MonkeyPatch, missing: str) -> None:
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
-    monkeypatch.setenv("LOLESPORTS_API_KEY", "lolesports-test")
-    monkeypatch.delenv(missing)
+@pytest.mark.parametrize("var", ["ANTHROPIC_API_KEY", "LOLESPORTS_API_KEY"])
+def test_api_keys_are_optional(monkeypatch: pytest.MonkeyPatch, var: str) -> None:
+    monkeypatch.delenv(var, raising=False)
 
-    with pytest.raises(ValueError, match=missing.lower()):
-        Settings(_env_file=None)
+    settings = Settings(_env_file=None)
+
+    assert getattr(settings, var.lower()) is None
+
+
+def test_require_secret_returns_the_value() -> None:
+    assert require_secret(SecretStr("sk-test"), "ANTHROPIC_API_KEY") == "sk-test"
+
+
+@pytest.mark.parametrize("value", [None, SecretStr("")])
+def test_require_secret_names_the_missing_variable(value: SecretStr | None) -> None:
+    with pytest.raises(MissingSettingError, match="ANTHROPIC_API_KEY"):
+        require_secret(value, "ANTHROPIC_API_KEY")
