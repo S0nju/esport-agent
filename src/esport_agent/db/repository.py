@@ -4,7 +4,7 @@ import sqlite3
 from collections.abc import Collection, Iterable
 from datetime import UTC, datetime
 
-from esport_agent.db.records import MatchRecord, TeamRecord
+from esport_agent.db.records import MatchRecord, MatchSide, PlayerRecord, TeamRecord
 
 
 def replace_teams(conn: sqlite3.Connection, teams: Iterable[TeamRecord]) -> None:
@@ -118,4 +118,139 @@ def delete_stale_matches(
 
 
 def _to_db_time(value: datetime) -> str:
-    return value.astimezone(UTC).isoformat()
+    # Whole seconds keep a fixed-width format, so that text comparisons stay correct.
+    return value.astimezone(UTC).isoformat(timespec="seconds")
+
+
+MAX_TEAM_CANDIDATES = 10
+
+# Most relevant teams first: active, playing in a league, with the largest roster.
+_TEAM_RANKING = """
+    ORDER BY status = 'active' DESC,
+        home_league IS NOT NULL DESC,
+        (SELECT count(*) FROM players p WHERE p.team_id = teams.id) DESC,
+        name
+"""
+
+
+def find_teams(conn: sqlite3.Connection, query: str) -> tuple[list[TeamRecord], bool]:
+    """Search teams by name, code or slug, case-insensitively, most relevant first.
+
+    Return the exact matches if there are any, otherwise the teams whose name contains
+    `query`. The boolean tells whether the matches are exact.
+    """
+    query = query.strip()
+    exact = conn.execute(
+        "SELECT * FROM teams WHERE name = ? COLLATE NOCASE OR code = ? COLLATE NOCASE"
+        " OR slug = ? COLLATE NOCASE" + _TEAM_RANKING + " LIMIT ?",
+        (query, query, query, MAX_TEAM_CANDIDATES),
+    ).fetchall()
+    if exact:
+        return [_team_from_row(conn, row) for row in exact], True
+    partial = conn.execute(
+        "SELECT * FROM teams WHERE name LIKE ? ESCAPE '\\'" + _TEAM_RANKING + " LIMIT ?",
+        (f"%{_escape_like(query)}%", MAX_TEAM_CANDIDATES),
+    ).fetchall()
+    return [_team_from_row(conn, row) for row in partial], False
+
+
+def next_match(conn: sqlite3.Connection, team_name: str, since: datetime) -> MatchRecord | None:
+    """Return `team_name`'s first unfinished match scheduled at or after `since`."""
+    row = conn.execute(
+        """
+        SELECT * FROM matches
+        WHERE (team1_name = :team COLLATE NOCASE OR team2_name = :team COLLATE NOCASE)
+            AND state != 'completed'
+            AND start_time >= :since
+        ORDER BY start_time
+        LIMIT 1
+        """,
+        {"team": team_name, "since": _to_db_time(since)},
+    ).fetchone()
+    return _match_from_row(row) if row else None
+
+
+def recent_results(conn: sqlite3.Connection, team_name: str, limit: int) -> list[MatchRecord]:
+    """Return `team_name`'s last `limit` completed matches, most recent first."""
+    rows = conn.execute(
+        """
+        SELECT * FROM matches
+        WHERE (team1_name = :team COLLATE NOCASE OR team2_name = :team COLLATE NOCASE)
+            AND state = 'completed'
+        ORDER BY start_time DESC
+        LIMIT :limit
+        """,
+        {"team": team_name, "limit": limit},
+    ).fetchall()
+    return [_match_from_row(row) for row in rows]
+
+
+def latest_league(conn: sqlite3.Connection, team_name: str) -> str | None:
+    """Return the league of `team_name`'s most recent match, if it has any.
+
+    More reliable than the source's home league, which can be the parent organization's
+    league (lolesports lists Karmine Corp Blue, an LFL team, in the LEC).
+    """
+    row = conn.execute(
+        """
+        SELECT league_name FROM matches
+        WHERE team1_name = :team COLLATE NOCASE OR team2_name = :team COLLATE NOCASE
+        ORDER BY start_time DESC
+        LIMIT 1
+        """,
+        {"team": team_name},
+    ).fetchone()
+    return str(row["league_name"]) if row else None
+
+
+def _escape_like(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _team_from_row(conn: sqlite3.Connection, row: sqlite3.Row) -> TeamRecord:
+    players = conn.execute(
+        "SELECT * FROM players WHERE team_id = ? ORDER BY summoner_name COLLATE NOCASE",
+        (row["id"],),
+    ).fetchall()
+    return TeamRecord(
+        id=row["id"],
+        slug=row["slug"],
+        name=row["name"],
+        code=row["code"],
+        status=row["status"],
+        home_league=row["home_league"],
+        players=tuple(
+            PlayerRecord(
+                id=p["id"],
+                summoner_name=p["summoner_name"],
+                first_name=p["first_name"],
+                last_name=p["last_name"],
+                role=p["role"],
+            )
+            for p in players
+        ),
+    )
+
+
+def _match_from_row(row: sqlite3.Row) -> MatchRecord:
+    return MatchRecord(
+        id=row["id"],
+        start_time=datetime.fromisoformat(row["start_time"]),
+        state=row["state"],
+        league_slug=row["league_slug"],
+        league_name=row["league_name"],
+        block_name=row["block_name"],
+        best_of=row["best_of"],
+        team1=MatchSide(
+            name=row["team1_name"],
+            code=row["team1_code"],
+            outcome=row["team1_outcome"],
+            game_wins=row["team1_game_wins"],
+        ),
+        team2=MatchSide(
+            name=row["team2_name"],
+            code=row["team2_code"],
+            outcome=row["team2_outcome"],
+            game_wins=row["team2_game_wins"],
+        ),
+    )
