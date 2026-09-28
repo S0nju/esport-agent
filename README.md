@@ -53,7 +53,12 @@ uv run pre-commit install
 
 uv run python -m esport_agent.sync   # update the local database (needs LOLESPORTS_API_KEY)
 uv run python -m esport_agent.cli    # start the agent (needs ANTHROPIC_API_KEY and a synced database)
+uv run python -m esport_agent.cli --tools   # call the tools directly, without Claude (free)
 ```
+
+In `--tools` mode, type `help` for the list of tools, then for example
+`get_team_recent_results team="Karmine Corp" limit=3`. No Anthropic key is needed: it is the
+free way to check the data and the team name resolution.
 
 ## Quality checks
 

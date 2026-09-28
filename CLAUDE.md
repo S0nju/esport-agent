@@ -26,6 +26,7 @@ focused on Karmine Corp, used through a CLI and later a Discord bot.
 - `uv run mypy src tests`: type checking
 - `uv run python -m esport_agent.sync`: update the database
 - `uv run python -m esport_agent.cli`: run the agent locally
+- `uv run python -m esport_agent.cli --tools`: call the tools directly, without Claude (free)
 
 ## Code rules
 - Write everything in English: code, comments, docstrings, log messages, commit messages,

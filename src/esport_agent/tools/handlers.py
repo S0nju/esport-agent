@@ -169,7 +169,7 @@ def execute_tool(
                 limit = DEFAULT_RESULTS_LIMIT
             result = get_team_recent_results(conn, team, limit, tz)
         case _:
-            raise UnknownToolError(name)
+            raise UnknownToolError(f"Unknown tool: {name}")
     return json.dumps(result, ensure_ascii=False)
 
 
