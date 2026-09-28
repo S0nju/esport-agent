@@ -11,6 +11,7 @@ from esport_agent.db import (
     PlayerRecord,
     TeamRecord,
     connect,
+    delete_stale_matches,
     init_schema,
     replace_teams,
     upsert_matches,
@@ -116,3 +117,29 @@ def test_upsert_matches_stores_start_time_in_utc(conn: sqlite3.Connection) -> No
 
     stored = conn.execute("SELECT start_time FROM matches").fetchone()[0]
     assert stored == "2026-09-19T15:00:00+00:00"
+
+
+def test_delete_stale_matches_only_removes_unfinished_matches_in_window(
+    conn: sqlite3.Connection,
+) -> None:
+    day = timedelta(days=1)
+    base = make_match()
+    upsert_matches(
+        conn,
+        [
+            replace(base, id="kept"),
+            replace(base, id="cancelled", start_time=base.start_time + day),
+            replace(base, id="completed", state="completed", start_time=base.start_time + day),
+            replace(base, id="before_window", start_time=base.start_time - 10 * day),
+            replace(base, id="after_window", start_time=base.start_time + 10 * day),
+            replace(base, id="other_league", league_slug="lfl", start_time=base.start_time + day),
+        ],
+    )
+
+    deleted = delete_stale_matches(
+        conn, "lec", start=base.start_time, end=base.start_time + 2 * day, keep_ids={"kept"}
+    )
+
+    assert deleted == 1
+    remaining = {row["id"] for row in conn.execute("SELECT id FROM matches")}
+    assert remaining == {"kept", "completed", "before_window", "after_window", "other_league"}
