@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Conversational esports agent (LLM + tool calling) for League of Legends"
 readme = "README.md"
 authors = [
-    { name = "Kelian Ninet", email = "kelian.ninet@insa-rennes.fr" }
+    { name = "Kelian Ninet", email = "kelian.ninet@free.fr" }
 ]
 requires-python = ">=3.14"
 dependencies = [
