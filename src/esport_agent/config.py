@@ -2,8 +2,9 @@
 
 from functools import lru_cache
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import SecretStr
+from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -23,6 +24,21 @@ class Settings(BaseSettings):
     sqlite_path: Path = Path("esport_agent.db")
     lolesports_leagues: list[str] = ["lec", "lfl", "worlds", "msi", "first_stand"]
     """Slugs of the lolesports leagues whose schedule is synced."""
+    timezone: str = "Europe/Paris"
+    """IANA time zone used to show match times and today's date to the agent."""
+
+    @field_validator("timezone")
+    @classmethod
+    def _check_timezone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError(f"Unknown time zone: {value!r}") from exc
+        return value
+
+    @property
+    def tzinfo(self) -> ZoneInfo:
+        return ZoneInfo(self.timezone)
 
 
 class MissingSettingError(RuntimeError):

@@ -15,6 +15,7 @@ def test_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
         "SQLITE_PATH",
         "LEAGUEPEDIA_BOT_USERNAME",
         "LOLESPORTS_LEAGUES",
+        "TIMEZONE",
     ):
         monkeypatch.delenv(var, raising=False)
 
@@ -28,6 +29,7 @@ def test_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.leaguepedia_bot_password is None
     assert settings.sqlite_path == Path("esport_agent.db")
     assert settings.lolesports_leagues == ["lec", "lfl", "worlds", "msi", "first_stand"]
+    assert settings.tzinfo.key == "Europe/Paris"
 
 
 def test_env_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -62,3 +64,12 @@ def test_require_secret_returns_the_value() -> None:
 def test_require_secret_names_the_missing_variable(value: SecretStr | None) -> None:
     with pytest.raises(MissingSettingError, match="ANTHROPIC_API_KEY"):
         require_secret(value, "ANTHROPIC_API_KEY")
+
+
+def test_timezone_override() -> None:
+    assert Settings(_env_file=None, timezone="America/New_York").tzinfo.key == "America/New_York"
+
+
+def test_unknown_timezone_is_rejected() -> None:
+    with pytest.raises(ValueError, match="Mars/Olympus"):
+        Settings(_env_file=None, timezone="Mars/Olympus")

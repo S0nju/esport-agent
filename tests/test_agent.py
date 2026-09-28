@@ -1,4 +1,5 @@
 import sqlite3
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -34,10 +35,13 @@ def tool_use(name: str, tool_input: dict[str, Any], tool_id: str = "toolu_1") ->
     return {"type": "tool_use", "id": tool_id, "name": name, "input": tool_input}
 
 
+NOW = datetime(2026, 10, 2, 16, 30, tzinfo=UTC)
+
+
 def make_agent(conn: sqlite3.Connection, settings: Settings, *responses: Message) -> Agent:
     client = MagicMock()
     client.messages.create.side_effect = list(responses)
-    return Agent(client, conn, settings)
+    return Agent(client, conn, settings, clock=lambda: NOW)
 
 
 def test_system_prompt_is_loaded() -> None:
@@ -62,7 +66,14 @@ def test_tool_call_then_answer(conn: sqlite3.Connection, settings: Settings) -> 
         answer = agent.ask("What is the roster?")
 
     assert answer == "Here is the roster"
-    execute.assert_called_once_with(conn, "get_team_roster", {}, settings.default_team)
+    execute.assert_called_once_with(
+        conn,
+        "get_team_roster",
+        {},
+        default_team=settings.default_team,
+        now=NOW.astimezone(settings.tzinfo),
+        tz=settings.tzinfo,
+    )
     second_call = agent._client.messages.create.call_args_list[1]  # type: ignore[attr-defined]
     tool_result = second_call.kwargs["messages"][-1]["content"][0]
     assert tool_result == {"type": "tool_result", "tool_use_id": "toolu_1", "content": "[]"}
@@ -113,3 +124,15 @@ def test_truncated_answer_is_returned(conn: sqlite3.Connection, settings: Settin
     agent = make_agent(conn, settings, make_message([text("Partial answer")], "max_tokens"))
 
     assert agent.ask("Hi") == "Partial answer"
+
+
+def test_current_date_is_sent_in_the_configured_time_zone(
+    conn: sqlite3.Connection, settings: Settings
+) -> None:
+    agent = make_agent(conn, settings, make_message([text("Hello")], "end_turn"))
+
+    agent.ask("Hi")
+
+    system = agent._client.messages.create.call_args.kwargs["system"]  # type: ignore[attr-defined]
+    assert system[0]["text"] == load_system_prompt()
+    assert system[1]["text"] == "Current date and time: Friday 2026-10-02 18:30 (Europe/Paris)."
