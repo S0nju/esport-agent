@@ -1,0 +1,42 @@
+{
+  "data": {
+    "leagues": [
+      {
+        "id": "98767975604431411",
+        "slug": "worlds",
+        "name": "Worlds",
+        "region": "INTERNATIONAL",
+        "image": "http://static.lolesports.com/leagues/1592594612171_WorldsDarkBG.png",
+        "priority": 1,
+        "displayPriority": {
+          "position": 0,
+          "status": "force_selected"
+        }
+      },
+      {
+        "id": "98767991302996019",
+        "slug": "lec",
+        "name": "LEC",
+        "region": "EMEA",
+        "image": "http://static.lolesports.com/leagues/1592516184297_LEC-01-FullonDark.png",
+        "priority": 1,
+        "displayPriority": {
+          "position": 3,
+          "status": "selected"
+        }
+      },
+      {
+        "id": "105266103462388553",
+        "slug": "lfl",
+        "name": "La Ligue Française",
+        "region": "EMEA",
+        "image": "http://static.lolesports.com/leagues/LFL_Logo_2020_black1.png",
+        "priority": 1,
+        "displayPriority": {
+          "position": 11,
+          "status": "not_selected"
+        }
+      }
+    ]
+  }
+}
