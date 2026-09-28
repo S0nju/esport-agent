@@ -9,6 +9,7 @@ from esport_agent.db.repository import (
     next_match,
     recent_results,
     replace_teams,
+    team_league_slugs,
     upsert_matches,
 )
 
@@ -25,5 +26,6 @@ __all__ = [
     "next_match",
     "recent_results",
     "replace_teams",
+    "team_league_slugs",
     "upsert_matches",
 ]

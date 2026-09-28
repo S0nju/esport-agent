@@ -203,6 +203,18 @@ def latest_league(conn: sqlite3.Connection, team_name: str) -> str | None:
     return str(row["league_name"]) if row else None
 
 
+def team_league_slugs(conn: sqlite3.Connection, team_name: str) -> set[str]:
+    """Return the slugs of every league in which `team_name` has a stored match."""
+    rows = conn.execute(
+        """
+        SELECT DISTINCT league_slug FROM matches
+        WHERE team1_name = :team COLLATE NOCASE OR team2_name = :team COLLATE NOCASE
+        """,
+        {"team": team_name},
+    ).fetchall()
+    return {str(row["league_slug"]) for row in rows}
+
+
 def _escape_like(value: str) -> str:
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 

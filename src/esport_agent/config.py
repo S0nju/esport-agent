@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     sqlite_path: Path = Path("esport_agent.db")
     lolesports_leagues: list[str] = ["lec", "lfl", "worlds", "msi", "first_stand"]
     """Slugs of the lolesports leagues whose schedule is synced."""
+    preferred_leagues: list[str] = ["lec"]
+    """lolesports league slugs, by priority. When a partial team name matches several teams
+    ("Vitality"), the one playing in the first of these leagues is picked."""
     timezone: str = "Europe/Paris"
     """IANA time zone used to show match times and today's date to the agent."""
 

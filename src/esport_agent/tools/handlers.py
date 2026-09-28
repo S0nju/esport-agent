@@ -6,11 +6,13 @@ JSON-serializable dict. Times are returned in the configured time zone.
 
 import json
 import sqlite3
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TypedDict
 from zoneinfo import ZoneInfo
 
+from esport_agent.config import Settings
 from esport_agent.db import (
     MatchRecord,
     MatchSide,
@@ -19,6 +21,7 @@ from esport_agent.db import (
     latest_league,
     next_match,
     recent_results,
+    team_league_slugs,
 )
 
 DEFAULT_RESULTS_LIMIT = 5
@@ -36,6 +39,29 @@ ROLE_ORDER = ("top", "jungle", "mid", "bottom", "support")
 
 class UnknownToolError(ValueError):
     """Claude asked for a tool that does not exist."""
+
+
+@dataclass(frozen=True)
+class ToolContext:
+    """What the tools need besides their arguments."""
+
+    default_team: str
+    """Used when Claude does not name a team."""
+    now: datetime
+    tz: ZoneInfo
+    """Time zone of the returned match times."""
+    preferred_leagues: Sequence[str] = ()
+    """League slugs, by priority, used to pick a team among several partial matches."""
+
+    @classmethod
+    def from_settings(cls, settings: Settings, now: datetime) -> ToolContext:
+        tz = settings.tzinfo
+        return cls(
+            default_team=settings.default_team,
+            now=now.astimezone(tz),
+            tz=tz,
+            preferred_leagues=tuple(settings.preferred_leagues),
+        )
 
 
 class TeamInfo(TypedDict):
@@ -90,9 +116,11 @@ class RecentResultsResponse(TypedDict):
     results: list[ResultInfo]
 
 
-def get_team_roster(conn: sqlite3.Connection, team: str) -> RosterResponse | TeamNotFound:
+def get_team_roster(
+    conn: sqlite3.Connection, team: str, preferred_leagues: Sequence[str] = ()
+) -> RosterResponse | TeamNotFound:
     """Return the current roster of `team`, main roles first."""
-    resolved = _resolve_team(conn, team)
+    resolved = _resolve_team(conn, team, preferred_leagues)
     if not isinstance(resolved, TeamRecord):
         return resolved
     players = sorted(resolved.players, key=lambda p: (_role_rank(p.role), p.summoner_name))
@@ -111,10 +139,14 @@ def get_team_roster(conn: sqlite3.Connection, team: str) -> RosterResponse | Tea
 
 
 def get_team_next_match(
-    conn: sqlite3.Connection, team: str, now: datetime, tz: ZoneInfo
+    conn: sqlite3.Connection,
+    team: str,
+    now: datetime,
+    tz: ZoneInfo,
+    preferred_leagues: Sequence[str] = (),
 ) -> NextMatchResponse | TeamNotFound:
     """Return `team`'s next match, or the one being played, if any."""
-    resolved = _resolve_team(conn, team)
+    resolved = _resolve_team(conn, team, preferred_leagues)
     if not isinstance(resolved, TeamRecord):
         return resolved
     match = next_match(conn, resolved.name, since=now - LIVE_MATCH_GRACE)
@@ -125,10 +157,14 @@ def get_team_next_match(
 
 
 def get_team_recent_results(
-    conn: sqlite3.Connection, team: str, limit: int, tz: ZoneInfo
+    conn: sqlite3.Connection,
+    team: str,
+    limit: int,
+    tz: ZoneInfo,
+    preferred_leagues: Sequence[str] = (),
 ) -> RecentResultsResponse | TeamNotFound:
     """Return `team`'s last `limit` results (clamped to 1-20), most recent first."""
-    resolved = _resolve_team(conn, team)
+    resolved = _resolve_team(conn, team, preferred_leagues)
     if not isinstance(resolved, TeamRecord):
         return resolved
     limit = min(max(limit, 1), MAX_RESULTS_LIMIT)
@@ -143,42 +179,44 @@ def execute_tool(
     conn: sqlite3.Connection,
     name: str,
     tool_input: Mapping[str, object],
-    *,
-    default_team: str,
-    now: datetime,
-    tz: ZoneInfo,
+    ctx: ToolContext,
 ) -> str:
     """Run the `name` tool and return its result serialized as JSON for Claude.
 
-    If Claude does not specify a team, `default_team` is used.
+    If Claude does not specify a team, `ctx.default_team` is used.
     """
     team = tool_input.get("team")
     if not isinstance(team, str) or not team.strip():
-        team = default_team
+        team = ctx.default_team
+    leagues = ctx.preferred_leagues
 
     result: object
     match name:
         case "get_team_roster":
-            result = get_team_roster(conn, team)
+            result = get_team_roster(conn, team, leagues)
         case "get_team_next_match":
-            result = get_team_next_match(conn, team, now, tz)
+            result = get_team_next_match(conn, team, ctx.now, ctx.tz, leagues)
         case "get_team_recent_results":
             limit = tool_input.get("limit")
             # bool is a subclass of int, but `true` is not a meaningful limit.
             if not isinstance(limit, int) or isinstance(limit, bool):
                 limit = DEFAULT_RESULTS_LIMIT
-            result = get_team_recent_results(conn, team, limit, tz)
+            result = get_team_recent_results(conn, team, limit, ctx.tz, leagues)
         case _:
             raise UnknownToolError(f"Unknown tool: {name}")
     return json.dumps(result, ensure_ascii=False)
 
 
-def _resolve_team(conn: sqlite3.Connection, query: str) -> TeamRecord | TeamNotFound:
+def _resolve_team(
+    conn: sqlite3.Connection, query: str, preferred_leagues: Sequence[str]
+) -> TeamRecord | TeamNotFound:
     """Pick the team the user most likely means, or explain why none could be picked.
 
     Exact matches (name, code or slug) are ranked and the best one wins, since homonyms are
-    mostly old or amateur teams. A partial name match is only accepted when a single
-    relevant team (active, in a league) matches; otherwise the candidates are returned.
+    mostly old or amateur teams. For a partial name, a single relevant team (active, in a
+    league) is accepted; among several, the only one playing in the first preferred league
+    that has any of them wins ("Vitality" gives the LEC team, not its academy). Otherwise the
+    candidates are returned.
     """
     teams, exact = find_teams(conn, query)
     if exact:
@@ -188,6 +226,13 @@ def _resolve_team(conn: sqlite3.Connection, query: str) -> TeamRecord | TeamNotF
         return relevant[0]
     if not relevant:
         return {"error": f"No team matches {query!r}.", "candidates": []}
+    for league in preferred_leagues:
+        in_league = [t for t in relevant if league in team_league_slugs(conn, t.name)]
+        if len(in_league) == 1:
+            return in_league[0]
+        if in_league:
+            relevant = in_league
+            break
     return {
         "error": f"Several teams match {query!r}: ask the user which one, or pick one.",
         "candidates": [_describe(conn, t) for t in relevant],

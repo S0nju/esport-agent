@@ -16,6 +16,7 @@ def test_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
         "LEAGUEPEDIA_BOT_USERNAME",
         "LOLESPORTS_LEAGUES",
         "TIMEZONE",
+        "PREFERRED_LEAGUES",
     ):
         monkeypatch.delenv(var, raising=False)
 
@@ -30,6 +31,7 @@ def test_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.sqlite_path == Path("esport_agent.db")
     assert settings.lolesports_leagues == ["lec", "lfl", "worlds", "msi", "first_stand"]
     assert settings.tzinfo.key == "Europe/Paris"
+    assert settings.preferred_leagues == ["lec"]
 
 
 def test_env_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
