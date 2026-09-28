@@ -18,6 +18,7 @@ focused on Karmine Corp, used through a CLI and later a Discord bot.
   when the team is unknown or ambiguous) and give times in the configured `TIMEZONE`.
 - `agent.py`: agent loop; sends today's date and time to Claude after the static system
   prompt. `prompts/system.md`: versioned system prompt.
+- `usage.py`: token usage and estimated cost of the Claude calls made for one question.
 - `cli.py`: local testing of the agent.
 
 ## Commands

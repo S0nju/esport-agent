@@ -56,6 +56,10 @@ uv run python -m esport_agent.cli    # start the agent (needs ANTHROPIC_API_KEY 
 uv run python -m esport_agent.cli --tools   # call the tools directly, without Claude (free)
 ```
 
+After each answer, the CLI shows the model used, the number of Claude calls, the tokens
+and an estimated cost, e.g. `[claude-haiku-4-5-20251001 · 2 calls · 3,412 in / 187 out
+tokens · ≈ $0.0043]`. The Usage page of the Anthropic console remains the source of truth.
+
 In `--tools` mode, type `help` for the list of tools, then for example
 `get_team_recent_results team="Karmine Corp" limit=3`. No Anthropic key is needed: it is the
 free way to check the data and the team name resolution.
