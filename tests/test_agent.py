@@ -9,6 +9,7 @@ from anthropic.types import Message
 from esport_agent import agent as agent_module
 from esport_agent.agent import MAX_TOOL_ROUNDS, Agent, AgentError, load_system_prompt
 from esport_agent.config import Settings
+from esport_agent.tools.handlers import ToolContext
 
 
 # Any: hand-built content blocks, validated afterwards by Message.model_validate.
@@ -68,12 +69,7 @@ def test_tool_call_then_answer(conn: sqlite3.Connection, settings: Settings) -> 
     assert answer.text == "Here is the roster"
     assert (answer.usage.calls, answer.usage.input_tokens, answer.usage.output_tokens) == (2, 2, 2)
     execute.assert_called_once_with(
-        conn,
-        "get_team_roster",
-        {},
-        default_team=settings.default_team,
-        now=NOW.astimezone(settings.tzinfo),
-        tz=settings.tzinfo,
+        conn, "get_team_roster", {}, ToolContext.from_settings(settings, NOW)
     )
     second_call = agent._client.messages.create.call_args_list[1]  # type: ignore[attr-defined]
     tool_result = second_call.kwargs["messages"][-1]["content"][0]

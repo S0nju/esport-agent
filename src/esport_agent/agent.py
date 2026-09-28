@@ -12,7 +12,7 @@ from anthropic.types import MessageParam, TextBlockParam, ToolResultBlockParam
 
 from esport_agent.config import Settings
 from esport_agent.tools.definitions import TOOLS
-from esport_agent.tools.handlers import execute_tool
+from esport_agent.tools.handlers import ToolContext, execute_tool
 from esport_agent.usage import Usage
 
 logger = logging.getLogger(__name__)
@@ -70,6 +70,7 @@ class Agent:
             },
         ]
         messages: list[MessageParam] = [{"role": "user", "content": question}]
+        tool_context = ToolContext.from_settings(self._settings, now)
         usage = Usage()
 
         for _ in range(MAX_TOOL_ROUNDS + 1):
@@ -97,14 +98,7 @@ class Agent:
                     continue
                 logger.info("Tool %s called with %s", block.name, block.input)
                 try:
-                    content = execute_tool(
-                        self._conn,
-                        block.name,
-                        block.input,
-                        default_team=self._settings.default_team,
-                        now=now,
-                        tz=tz,
-                    )
+                    content = execute_tool(self._conn, block.name, block.input, tool_context)
                     results.append(
                         {"type": "tool_result", "tool_use_id": block.id, "content": content}
                     )

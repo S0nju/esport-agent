@@ -6,9 +6,11 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from esport_agent.config import Settings
 from esport_agent.db import replace_teams, upsert_matches
 from esport_agent.tools import handlers
 from esport_agent.tools.handlers import (
+    ToolContext,
     execute_tool,
     get_team_next_match,
     get_team_recent_results,
@@ -164,8 +166,11 @@ def test_recent_results_limit_is_clamped(db: sqlite3.Connection, limit: int, exp
     assert len(result["results"]) == expected
 
 
+CTX = ToolContext(default_team="Karmine Corp", now=NOW, tz=PARIS, preferred_leagues=("lec",))
+
+
 def run(db: sqlite3.Connection, name: str, tool_input: dict[str, object]) -> object:
-    output = execute_tool(db, name, tool_input, default_team="Karmine Corp", now=NOW, tz=PARIS)
+    output = execute_tool(db, name, tool_input, CTX)
     parsed: object = json.loads(output)
     return parsed
 
@@ -201,7 +206,9 @@ def test_execute_tool_recent_results_limit(
 ) -> None:
     calls: list[int] = []
 
-    def fake(conn: sqlite3.Connection, team: str, limit: int, tz: ZoneInfo) -> dict[str, str]:
+    def fake(
+        conn: sqlite3.Connection, team: str, limit: int, tz: ZoneInfo, leagues: object
+    ) -> dict[str, str]:
         calls.append(limit)
         return {}
 
@@ -215,9 +222,7 @@ def test_execute_tool_recent_results_limit(
 def test_execute_tool_keeps_non_ascii_characters(db: sqlite3.Connection) -> None:
     replace_teams(db, [make_team("s", name="Équipe Été", code="EE")])
 
-    output = execute_tool(
-        db, "get_team_roster", {"team": "EE"}, default_team="x", now=NOW, tz=PARIS
-    )
+    output = execute_tool(db, "get_team_roster", {"team": "EE"}, CTX)
 
     assert "Équipe Été" in output
 
@@ -239,3 +244,87 @@ def test_team_league_comes_from_its_latest_match(db: sqlite3.Connection) -> None
 
     assert "error" not in result
     assert result["team"]["league"] == "La Ligue Française"
+
+
+def add_league_matches(db: sqlite3.Connection, league_slug: str, *teams: str) -> None:
+    upsert_matches(
+        db,
+        [
+            replace(
+                make_match(f"{league_slug}-{team}", start_time=NOW - DAY, team1=team, score=(2, 0)),
+                league_slug=league_slug,
+            )
+            for team in teams
+        ],
+    )
+
+
+def test_preferred_league_picks_among_partial_matches(db: sqlite3.Connection) -> None:
+    add_league_matches(db, "lec", "Karmine Corp")
+    add_league_matches(db, "lfl", "Karmine Corp Blue")
+
+    result = get_team_roster(db, "Karmine", preferred_leagues=("lec",))
+
+    assert "error" not in result
+    assert result["team"]["name"] == "Karmine Corp"
+
+
+def test_preferred_league_uses_any_stored_match_not_only_the_latest(
+    db: sqlite3.Connection,
+) -> None:
+    add_league_matches(db, "lec", "Karmine Corp")
+    add_league_matches(db, "lfl", "Karmine Corp Blue")
+    # A more recent international match must not hide that the team plays in the LEC.
+    upsert_matches(
+        db,
+        [
+            replace(
+                make_match("worlds", start_time=NOW, team1="Karmine Corp", score=(1, 0)),
+                league_slug="worlds",
+            )
+        ],
+    )
+
+    result = get_team_roster(db, "Karmine", preferred_leagues=("lec",))
+
+    assert "error" not in result
+    assert result["team"]["name"] == "Karmine Corp"
+
+
+def test_preferred_leagues_are_tried_in_order(db: sqlite3.Connection) -> None:
+    add_league_matches(db, "lec", "Karmine Corp")
+    add_league_matches(db, "lfl", "Karmine Corp Blue")
+
+    result = get_team_roster(db, "Karmine", preferred_leagues=("lfl", "lec"))
+
+    assert "error" not in result
+    assert result["team"]["name"] == "Karmine Corp Blue"
+
+
+def test_several_teams_in_the_preferred_league_stay_ambiguous(db: sqlite3.Connection) -> None:
+    add_league_matches(db, "lec", "Karmine Corp", "Karmine Corp Blue")
+
+    result = get_team_roster(db, "Karmine", preferred_leagues=("lec",))
+
+    assert result == {
+        "error": "Several teams match 'Karmine': ask the user which one, or pick one.",
+        "candidates": ["Karmine Corp (KC, LEC)", "Karmine Corp Blue (KCB, LEC)"],
+    }
+
+
+def test_no_team_in_the_preferred_leagues_stays_ambiguous(db: sqlite3.Connection) -> None:
+    add_league_matches(db, "lfl", "Karmine Corp", "Karmine Corp Blue")
+
+    result = get_team_roster(db, "Karmine", preferred_leagues=("lec",))
+
+    assert "error" in result
+
+
+def test_tool_context_from_settings(settings: Settings) -> None:
+    ctx = ToolContext.from_settings(settings, NOW)
+
+    assert ctx.default_team == "Karmine Corp"
+    assert ctx.tz.key == "Europe/Paris"
+    assert ctx.now == NOW
+    assert ctx.now.tzinfo == ctx.tz
+    assert ctx.preferred_leagues == ("lec",)

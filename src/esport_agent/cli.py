@@ -21,7 +21,7 @@ from esport_agent.agent import Agent, AgentError
 from esport_agent.config import MissingSettingError, Settings, get_settings, require_secret
 from esport_agent.db import connect, init_schema
 from esport_agent.tools.definitions import TOOLS
-from esport_agent.tools.handlers import UnknownToolError, execute_tool
+from esport_agent.tools.handlers import ToolContext, UnknownToolError, execute_tool
 
 EXIT_COMMANDS = frozenset({"quit", "exit", "q"})
 
@@ -95,15 +95,8 @@ def tools_repl(conn: sqlite3.Connection, settings: Settings) -> None:
             continue
         try:
             name, tool_input = parse_tool_call(line)
-            tz = settings.tzinfo
-            output = execute_tool(
-                conn,
-                name,
-                tool_input,
-                default_team=settings.default_team,
-                now=datetime.now(UTC).astimezone(tz),
-                tz=tz,
-            )
+            ctx = ToolContext.from_settings(settings, datetime.now(UTC))
+            output = execute_tool(conn, name, tool_input, ctx)
         except (ValueError, UnknownToolError) as exc:
             print(f"Error: {exc}")
             continue
