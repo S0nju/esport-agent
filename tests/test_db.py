@@ -9,6 +9,7 @@ from esport_agent.db import (
     MatchSide,
     connect,
     delete_stale_matches,
+    find_leagues,
     find_teams,
     init_schema,
     latest_league,
@@ -208,3 +209,42 @@ def test_latest_league_uses_the_most_recent_match(conn: sqlite3.Connection) -> N
 
     assert latest_league(conn, "team b") == "LFL"
     assert latest_league(conn, "Unknown") is None
+
+
+def test_find_leagues_by_slug_or_name_part(conn: sqlite3.Connection) -> None:
+    upsert_matches(
+        conn,
+        [
+            replace(make_match("a"), league_slug="lfl", league_name="La Ligue Française"),
+            replace(make_match("b"), league_slug="lec", league_name="LEC"),
+        ],
+    )
+
+    assert find_leagues(conn, "LFL") == {"lfl"}
+    assert find_leagues(conn, "ligue") == {"lfl"}
+    assert find_leagues(conn, " lec ") == {"lec"}
+    assert find_leagues(conn, "Worlds") == set()
+
+
+def test_match_queries_filter_by_league(conn: sqlite3.Connection) -> None:
+    now = datetime(2026, 10, 1, tzinfo=UTC)
+    upsert_matches(
+        conn,
+        [
+            replace(make_match("lec", start_time=now - timedelta(days=1), score=(2, 0))),
+            replace(
+                make_match("worlds", start_time=now - timedelta(days=2), score=(2, 0)),
+                league_slug="worlds",
+            ),
+            replace(make_match("lec-next", start_time=now + timedelta(days=1))),
+            replace(
+                make_match("worlds-next", start_time=now + timedelta(days=2)),
+                league_slug="worlds",
+            ),
+        ],
+    )
+
+    assert [m.id for m in recent_results(conn, "Team A", 5, {"worlds"})] == ["worlds"]
+    assert [m.id for m in recent_results(conn, "Team A", 5)] == ["lec", "worlds"]
+    worlds_next = next_match(conn, "Team A", now, {"worlds"})
+    assert worlds_next is not None and worlds_next.id == "worlds-next"

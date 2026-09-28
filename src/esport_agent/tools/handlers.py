@@ -17,7 +17,9 @@ from esport_agent.db import (
     MatchRecord,
     MatchSide,
     TeamRecord,
+    find_leagues,
     find_teams,
+    find_teams_by_name_part,
     latest_league,
     next_match,
     recent_results,
@@ -96,7 +98,9 @@ class ResultInfo(MatchInfo):
     """"win" or "loss"."""
 
 
-class TeamNotFound(TypedDict):
+class ToolError(TypedDict):
+    """Why a tool could not answer, with the teams the user may have meant."""
+
     error: str
     candidates: list[str]
 
@@ -117,12 +121,19 @@ class RecentResultsResponse(TypedDict):
 
 
 def get_team_roster(
-    conn: sqlite3.Connection, team: str, preferred_leagues: Sequence[str] = ()
-) -> RosterResponse | TeamNotFound:
-    """Return the current roster of `team`, main roles first."""
-    resolved = _resolve_team(conn, team, preferred_leagues)
-    if not isinstance(resolved, TeamRecord):
-        return resolved
+    conn: sqlite3.Connection,
+    team: str,
+    preferred_leagues: Sequence[str] = (),
+    league: str | None = None,
+) -> RosterResponse | ToolError:
+    """Return the current roster of `team`, main roles first.
+
+    `league` picks the team of the organization playing there ("KC" + "LFL").
+    """
+    found = _resolve(conn, team, league, preferred_leagues)
+    if isinstance(found, dict):
+        return found
+    resolved, _ = found
     players = sorted(resolved.players, key=lambda p: (_role_rank(p.role), p.summoner_name))
     return {
         "team": _team_info(conn, resolved),
@@ -144,12 +155,17 @@ def get_team_next_match(
     now: datetime,
     tz: ZoneInfo,
     preferred_leagues: Sequence[str] = (),
-) -> NextMatchResponse | TeamNotFound:
-    """Return `team`'s next match, or the one being played, if any."""
-    resolved = _resolve_team(conn, team, preferred_leagues)
-    if not isinstance(resolved, TeamRecord):
-        return resolved
-    match = next_match(conn, resolved.name, since=now - LIVE_MATCH_GRACE)
+    league: str | None = None,
+) -> NextMatchResponse | ToolError:
+    """Return `team`'s next match, or the one being played, if any.
+
+    `league` picks the team playing there and only considers the matches of that league.
+    """
+    found = _resolve(conn, team, league, preferred_leagues)
+    if isinstance(found, dict):
+        return found
+    resolved, league_slugs = found
+    match = next_match(conn, resolved.name, now - LIVE_MATCH_GRACE, league_slugs)
     return {
         "team": _team_info(conn, resolved),
         "next_match": _match_info(match, resolved.name, tz) if match else None,
@@ -162,16 +178,22 @@ def get_team_recent_results(
     limit: int,
     tz: ZoneInfo,
     preferred_leagues: Sequence[str] = (),
-) -> RecentResultsResponse | TeamNotFound:
-    """Return `team`'s last `limit` results (clamped to 1-20), most recent first."""
-    resolved = _resolve_team(conn, team, preferred_leagues)
-    if not isinstance(resolved, TeamRecord):
-        return resolved
+    league: str | None = None,
+) -> RecentResultsResponse | ToolError:
+    """Return `team`'s last `limit` results (clamped to 1-20), most recent first.
+
+    `league` picks the team playing there and only returns the matches of that league.
+    """
+    found = _resolve(conn, team, league, preferred_leagues)
+    if isinstance(found, dict):
+        return found
+    resolved, league_slugs = found
     limit = min(max(limit, 1), MAX_RESULTS_LIMIT)
     name = resolved.name
+    matches = recent_results(conn, name, limit, league_slugs)
     return {
         "team": _team_info(conn, resolved),
-        "results": [_result_info(match, name, tz) for match in recent_results(conn, name, limit)],
+        "results": [_result_info(match, name, tz) for match in matches],
     }
 
 
@@ -188,28 +210,79 @@ def execute_tool(
     team = tool_input.get("team")
     if not isinstance(team, str) or not team.strip():
         team = ctx.default_team
+    league = tool_input.get("league")
+    if not isinstance(league, str) or not league.strip():
+        league = None
     leagues = ctx.preferred_leagues
 
     result: object
     match name:
         case "get_team_roster":
-            result = get_team_roster(conn, team, leagues)
+            result = get_team_roster(conn, team, leagues, league)
         case "get_team_next_match":
-            result = get_team_next_match(conn, team, ctx.now, ctx.tz, leagues)
+            result = get_team_next_match(conn, team, ctx.now, ctx.tz, leagues, league)
         case "get_team_recent_results":
             limit = tool_input.get("limit")
             # bool is a subclass of int, but `true` is not a meaningful limit.
             if not isinstance(limit, int) or isinstance(limit, bool):
                 limit = DEFAULT_RESULTS_LIMIT
-            result = get_team_recent_results(conn, team, limit, ctx.tz, leagues)
+            result = get_team_recent_results(conn, team, limit, ctx.tz, leagues, league)
         case _:
             raise UnknownToolError(f"Unknown tool: {name}")
     return json.dumps(result, ensure_ascii=False)
 
 
+def _resolve(
+    conn: sqlite3.Connection, team: str, league: str | None, preferred_leagues: Sequence[str]
+) -> tuple[TeamRecord, set[str]] | ToolError:
+    """Resolve the team and, if given, the league slugs the user asked about."""
+    if league is None:
+        resolved = _resolve_team(conn, team, preferred_leagues)
+        return (resolved, set()) if isinstance(resolved, TeamRecord) else resolved
+    league_slugs = find_leagues(conn, league)
+    if not league_slugs:
+        return {"error": f"No synced league matches {league!r}.", "candidates": []}
+    resolved = _resolve_team_in_league(conn, team, league, league_slugs)
+    return (resolved, league_slugs) if isinstance(resolved, TeamRecord) else resolved
+
+
+def _resolve_team_in_league(
+    conn: sqlite3.Connection, query: str, league: str, league_slugs: set[str]
+) -> TeamRecord | ToolError:
+    """Pick the team matching `query` that plays in one of `league_slugs`.
+
+    If the team the user named does not play there, look for another team of the same
+    organization that does, i.e. a team whose name contains its name: "KC" in the LFL is
+    Karmine Corp Blue.
+    """
+
+    def plays_there(team: TeamRecord) -> bool:
+        return bool(team_league_slugs(conn, team.name) & league_slugs)
+
+    teams, exact = find_teams(conn, query)
+    candidates = [t for t in teams if plays_there(t)]
+    if exact and candidates:
+        return candidates[0]
+    if exact:
+        same_organization: dict[str, TeamRecord] = {}
+        for team in teams:
+            for other in find_teams_by_name_part(conn, team.name):
+                if plays_there(other):
+                    same_organization.setdefault(other.id, other)
+        candidates = list(same_organization.values())
+    if len(candidates) == 1:
+        return candidates[0]
+    if not candidates:
+        return {"error": f"No team matching {query!r} plays in {league!r}.", "candidates": []}
+    return {
+        "error": f"Several teams match {query!r} in {league!r}: ask the user which one.",
+        "candidates": [_describe(conn, t) for t in candidates],
+    }
+
+
 def _resolve_team(
     conn: sqlite3.Connection, query: str, preferred_leagues: Sequence[str]
-) -> TeamRecord | TeamNotFound:
+) -> TeamRecord | ToolError:
     """Pick the team the user most likely means, or explain why none could be picked.
 
     Exact matches (name, code or slug) are ranked and the best one wins, since homonyms are

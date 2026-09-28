@@ -10,6 +10,15 @@ _TEAM_PROPERTY = {
     ),
 }
 
+_LEAGUE_PROPERTY = {
+    "type": "string",
+    "description": (
+        "League or competition the user mentions, as written (e.g. 'LFL', 'LEC', 'Worlds'). "
+        "It selects the organization's team playing there ('KC' + 'LFL' is Karmine Corp "
+        "Blue) and only keeps that league's matches. Omit it if the user names none."
+    ),
+}
+
 _LIMIT_PROPERTY = {
     "type": "integer",
     "description": "Number of matches to return (defaults to 5).",
@@ -26,7 +35,7 @@ TOOLS: list[ToolParam] = [
         ),
         "input_schema": {
             "type": "object",
-            "properties": {"team": _TEAM_PROPERTY},
+            "properties": {"team": _TEAM_PROPERTY, "league": _LEAGUE_PROPERTY},
             "required": [],
         },
     },
@@ -39,7 +48,7 @@ TOOLS: list[ToolParam] = [
         ),
         "input_schema": {
             "type": "object",
-            "properties": {"team": _TEAM_PROPERTY},
+            "properties": {"team": _TEAM_PROPERTY, "league": _LEAGUE_PROPERTY},
             "required": [],
         },
     },
@@ -51,7 +60,11 @@ TOOLS: list[ToolParam] = [
         ),
         "input_schema": {
             "type": "object",
-            "properties": {"team": _TEAM_PROPERTY, "limit": _LIMIT_PROPERTY},
+            "properties": {
+                "team": _TEAM_PROPERTY,
+                "league": _LEAGUE_PROPERTY,
+                "limit": _LIMIT_PROPERTY,
+            },
             "required": [],
         },
     },

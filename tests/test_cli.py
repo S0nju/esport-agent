@@ -123,7 +123,7 @@ def test_tools_repl_calls_tools_without_claude(
     tools_repl(conn, settings)
 
     output = capsys.readouterr().out
-    assert "- get_team_roster (team):" in output
+    assert "- get_team_roster (team, league):" in output
     assert '"summoner_name": "Caliste"' in output
     assert "Error: Unknown tool: nope" in output
     assert "Error: Expected key=value" in output
