@@ -6,48 +6,18 @@ from pathlib import Path
 import pytest
 
 from esport_agent.db import (
-    MatchRecord,
     MatchSide,
-    PlayerRecord,
-    TeamRecord,
     connect,
     delete_stale_matches,
+    find_teams,
     init_schema,
+    latest_league,
+    next_match,
+    recent_results,
     replace_teams,
     upsert_matches,
 )
-
-
-def make_team(team_id: str = "t1", players: tuple[PlayerRecord, ...] = ()) -> TeamRecord:
-    return TeamRecord(
-        id=team_id,
-        slug=f"team-{team_id}",
-        name=f"Team {team_id}",
-        code=team_id.upper(),
-        status="active",
-        home_league="LEC",
-        players=players,
-    )
-
-
-def make_player(player_id: str, role: str = "mid") -> PlayerRecord:
-    return PlayerRecord(
-        id=player_id, summoner_name=player_id, first_name="First", last_name="Last", role=role
-    )
-
-
-def make_match(match_id: str = "m1", state: str = "unstarted") -> MatchRecord:
-    return MatchRecord(
-        id=match_id,
-        start_time=datetime(2026, 9, 19, 15, tzinfo=UTC),
-        state=state,
-        league_slug="lec",
-        league_name="LEC",
-        block_name="Playoffs",
-        best_of=5,
-        team1=MatchSide(name="Team A", code="A", outcome=None, game_wins=None),
-        team2=MatchSide(name="Team B", code="B", outcome=None, game_wins=None),
-    )
+from tests.factories import make_match, make_player, make_team
 
 
 def test_connect_uses_row_factory_and_foreign_keys(tmp_path: Path) -> None:
@@ -143,3 +113,98 @@ def test_delete_stale_matches_only_removes_unfinished_matches_in_window(
     assert deleted == 1
     remaining = {row["id"] for row in conn.execute("SELECT id FROM matches")}
     assert remaining == {"kept", "completed", "before_window", "after_window", "other_league"}
+
+
+def test_find_teams_exact_match_on_name_code_or_slug(conn: sqlite3.Connection) -> None:
+    replace_teams(conn, [make_team("kc", name="Karmine Corp", code="KC")])
+
+    for query in ("karmine corp", "KC", "kc", "team-kc", "  KC  "):
+        teams, exact = find_teams(conn, query)
+        assert exact, query
+        assert [t.name for t in teams] == ["Karmine Corp"], query
+
+
+def test_find_teams_ranks_homonyms(conn: sqlite3.Connection) -> None:
+    replace_teams(
+        conn,
+        [
+            make_team("old", name="Alliance", status="archived"),
+            make_team("amateur", name="Alliance", home_league=None),
+            make_team("pro", (make_player("p1"),), name="Alliance"),
+        ],
+    )
+
+    teams, exact = find_teams(conn, "Alliance")
+
+    assert exact
+    assert [t.id for t in teams] == ["pro", "amateur", "old"]
+    assert [p.id for p in teams[0].players] == ["p1"]
+
+
+def test_find_teams_falls_back_to_partial_names(conn: sqlite3.Connection) -> None:
+    replace_teams(
+        conn,
+        [
+            make_team("kc", name="Karmine Corp", code="KC"),
+            make_team("kcb", name="Karmine Corp Blue", code="KCB", home_league="LFL"),
+            make_team("g2", name="G2 Esports", code="G2"),
+        ],
+    )
+
+    teams, exact = find_teams(conn, "karmine")
+
+    assert not exact
+    assert {t.name for t in teams} == {"Karmine Corp", "Karmine Corp Blue"}
+
+
+def test_find_teams_escapes_like_wildcards(conn: sqlite3.Connection) -> None:
+    replace_teams(conn, [make_team("a", name="Team A"), make_team("b", name="100% Team")])
+
+    teams, _ = find_teams(conn, "%")
+
+    assert [t.name for t in teams] == ["100% Team"]
+
+
+def test_next_match_returns_the_first_unfinished_match_since(conn: sqlite3.Connection) -> None:
+    day = timedelta(days=1)
+    now = datetime(2026, 10, 1, 12, tzinfo=UTC)
+    upsert_matches(
+        conn,
+        [
+            make_match("past", start_time=now - day),
+            make_match("played", start_time=now + day, score=(2, 0)),
+            make_match("later", start_time=now + 3 * day),
+            make_match("next", start_time=now + 2 * day, team1="Team B", team2="Team A"),
+            make_match("other", start_time=now + day, team1="Team C", team2="Team D"),
+        ],
+    )
+
+    match = next_match(conn, "team a", since=now)
+
+    assert match is not None
+    assert match.id == "next"
+    assert match.start_time == now + 2 * day
+    assert next_match(conn, "Team A", since=now + 10 * day) is None
+
+
+def test_recent_results_most_recent_first(conn: sqlite3.Connection) -> None:
+    day = timedelta(days=1)
+    base = datetime(2026, 9, 1, tzinfo=UTC)
+    upsert_matches(
+        conn,
+        [make_match(f"m{i}", start_time=base + i * day, score=(2, 1)) for i in range(4)]
+        + [make_match("upcoming", start_time=base + 10 * day)],
+    )
+
+    results = recent_results(conn, "Team A", limit=3)
+
+    assert [m.id for m in results] == ["m3", "m2", "m1"]
+    assert results[0].team1 == MatchSide(name="Team A", code="TEA", outcome="win", game_wins=2)
+
+
+def test_latest_league_uses_the_most_recent_match(conn: sqlite3.Connection) -> None:
+    lfl = replace(make_match("new"), league_name="LFL", start_time=datetime(2026, 9, 1, tzinfo=UTC))
+    upsert_matches(conn, [make_match("old", start_time=datetime(2026, 1, 1, tzinfo=UTC)), lfl])
+
+    assert latest_league(conn, "team b") == "LFL"
+    assert latest_league(conn, "Unknown") is None

@@ -2,10 +2,12 @@
 
 import logging
 import sqlite3
+from collections.abc import Callable
+from datetime import UTC, datetime
 from importlib.resources import files
 
 import anthropic
-from anthropic.types import MessageParam, ToolResultBlockParam
+from anthropic.types import MessageParam, TextBlockParam, ToolResultBlockParam
 
 from esport_agent.config import Settings
 from esport_agent.tools.definitions import TOOLS
@@ -30,22 +32,38 @@ class Agent:
     """Answer a natural-language question using the tools."""
 
     def __init__(
-        self, client: anthropic.Anthropic, conn: sqlite3.Connection, settings: Settings
+        self,
+        client: anthropic.Anthropic,
+        conn: sqlite3.Connection,
+        settings: Settings,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._client = client
         self._conn = conn
         self._settings = settings
+        self._clock = clock
         self._system_prompt = load_system_prompt()
 
     def ask(self, question: str) -> str:
         """Ask the agent a question and return its text answer."""
+        tz = self._settings.tzinfo
+        now = self._clock().astimezone(tz)
+        # The static prompt comes first and today's date last, so the prompt prefix stays
+        # identical across questions.
+        system: list[TextBlockParam] = [
+            {"type": "text", "text": self._system_prompt},
+            {
+                "type": "text",
+                "text": f"Current date and time: {now:%A %Y-%m-%d %H:%M} ({tz.key}).",
+            },
+        ]
         messages: list[MessageParam] = [{"role": "user", "content": question}]
 
         for _ in range(MAX_TOOL_ROUNDS + 1):
             response = self._client.messages.create(
                 model=self._settings.claude_model,
                 max_tokens=MAX_TOKENS,
-                system=self._system_prompt,
+                system=system,
                 tools=TOOLS,
                 messages=messages,
             )
@@ -65,7 +83,12 @@ class Agent:
                 logger.info("Tool %s called with %s", block.name, block.input)
                 try:
                     content = execute_tool(
-                        self._conn, block.name, block.input, self._settings.default_team
+                        self._conn,
+                        block.name,
+                        block.input,
+                        default_team=self._settings.default_team,
+                        now=now,
+                        tz=tz,
                     )
                     results.append(
                         {"type": "tool_result", "tool_use_id": block.id, "content": content}

@@ -13,7 +13,11 @@ focused on Karmine Corp, used through a CLI and later a Discord bot.
 - `db/`: database schema (`schema.sql`), source-agnostic records (`records.py`) and
   reads/writes (`repository.py`). Datetimes are stored as ISO 8601 UTC strings.
 - `tools/`: tools exposed to Claude. They only read the local database, never the APIs.
-- `agent.py`: agent loop. `prompts/system.md`: versioned system prompt.
+  `definitions.py` holds the schemas, `handlers.py` the tool functions and the dispatch.
+  Tools accept a team name, short name or code, return JSON (an `error` with candidates
+  when the team is unknown or ambiguous) and give times in the configured `TIMEZONE`.
+- `agent.py`: agent loop; sends today's date and time to Claude after the static system
+  prompt. `prompts/system.md`: versioned system prompt.
 - `cli.py`: local testing of the agent.
 
 ## Commands
