@@ -51,7 +51,7 @@ def test_system_prompt_is_loaded() -> None:
 def test_answer_without_tool(conn: sqlite3.Connection, settings: Settings) -> None:
     agent = make_agent(conn, settings, make_message([text("Hello")], "end_turn"))
 
-    assert agent.ask("Hi") == "Hello"
+    assert agent.ask("Hi").text == "Hello"
 
 
 def test_tool_call_then_answer(conn: sqlite3.Connection, settings: Settings) -> None:
@@ -65,7 +65,8 @@ def test_tool_call_then_answer(conn: sqlite3.Connection, settings: Settings) -> 
     with patch.object(agent_module, "execute_tool", return_value="[]") as execute:
         answer = agent.ask("What is the roster?")
 
-    assert answer == "Here is the roster"
+    assert answer.text == "Here is the roster"
+    assert (answer.usage.calls, answer.usage.input_tokens, answer.usage.output_tokens) == (2, 2, 2)
     execute.assert_called_once_with(
         conn,
         "get_team_roster",
@@ -88,7 +89,7 @@ def test_tool_error_is_sent_back_to_claude(conn: sqlite3.Connection, settings: S
     )
 
     with patch.object(agent_module, "execute_tool", side_effect=RuntimeError("boom")):
-        assert agent.ask("Roster?") == "Sorry"
+        assert agent.ask("Roster?").text == "Sorry"
 
     second_call = agent._client.messages.create.call_args_list[1]  # type: ignore[attr-defined]
     tool_result = second_call.kwargs["messages"][-1]["content"][0]
@@ -105,9 +106,12 @@ def test_too_many_tool_rounds(conn: sqlite3.Connection, settings: Settings) -> N
 
     with (
         patch.object(agent_module, "execute_tool", return_value="[]"),
-        pytest.raises(AgentError),
+        pytest.raises(AgentError) as error,
     ):
         agent.ask("Roster?")
+
+    assert error.value.usage is not None
+    assert error.value.usage.calls == MAX_TOOL_ROUNDS + 1
 
 
 @pytest.mark.parametrize("stop_reason", ["end_turn", "max_tokens", "refusal"])
@@ -123,7 +127,7 @@ def test_empty_answer_raises(
 def test_truncated_answer_is_returned(conn: sqlite3.Connection, settings: Settings) -> None:
     agent = make_agent(conn, settings, make_message([text("Partial answer")], "max_tokens"))
 
-    assert agent.ask("Hi") == "Partial answer"
+    assert agent.ask("Hi").text == "Partial answer"
 
 
 def test_current_date_is_sent_in_the_configured_time_zone(

@@ -3,6 +3,7 @@
 import logging
 import sqlite3
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from importlib.resources import files
 
@@ -12,6 +13,7 @@ from anthropic.types import MessageParam, TextBlockParam, ToolResultBlockParam
 from esport_agent.config import Settings
 from esport_agent.tools.definitions import TOOLS
 from esport_agent.tools.handlers import execute_tool
+from esport_agent.usage import Usage
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +22,17 @@ MAX_TOOL_ROUNDS = 5
 
 
 class AgentError(RuntimeError):
-    """The agent could not produce an answer."""
+    """The agent could not produce an answer. `usage` holds the calls already paid for."""
+
+    def __init__(self, message: str, usage: Usage | None = None) -> None:
+        super().__init__(message)
+        self.usage = usage
+
+
+@dataclass(frozen=True)
+class Answer:
+    text: str
+    usage: Usage
 
 
 def load_system_prompt() -> str:
@@ -44,8 +56,8 @@ class Agent:
         self._clock = clock
         self._system_prompt = load_system_prompt()
 
-    def ask(self, question: str) -> str:
-        """Ask the agent a question and return its text answer."""
+    def ask(self, question: str) -> Answer:
+        """Ask the agent a question and return its answer with the usage it cost."""
         tz = self._settings.tzinfo
         now = self._clock().astimezone(tz)
         # The static prompt comes first and today's date last, so the prompt prefix stays
@@ -58,6 +70,7 @@ class Agent:
             },
         ]
         messages: list[MessageParam] = [{"role": "user", "content": question}]
+        usage = Usage()
 
         for _ in range(MAX_TOOL_ROUNDS + 1):
             response = self._client.messages.create(
@@ -67,13 +80,15 @@ class Agent:
                 tools=TOOLS,
                 messages=messages,
             )
+            usage.record(response)
+            logger.info("Claude call: %s", usage.summary())
             if response.stop_reason != "tool_use":
                 answer = "".join(b.text for b in response.content if b.type == "text").strip()
                 if not answer:
-                    raise AgentError(f"Empty answer (stop_reason={response.stop_reason})")
+                    raise AgentError(f"Empty answer (stop_reason={response.stop_reason})", usage)
                 if response.stop_reason != "end_turn":
                     logger.warning("Answer cut short: stop_reason=%s", response.stop_reason)
-                return answer
+                return Answer(text=answer, usage=usage)
 
             messages.append({"role": "assistant", "content": response.content})
             results: list[ToolResultBlockParam] = []
@@ -106,4 +121,4 @@ class Agent:
                     )
             messages.append({"role": "user", "content": results})
 
-        raise AgentError(f"No final answer after {MAX_TOOL_ROUNDS} tool rounds")
+        raise AgentError(f"No final answer after {MAX_TOOL_ROUNDS} tool rounds", usage)
