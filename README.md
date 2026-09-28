@@ -22,7 +22,7 @@ the agent asks which team you mean. Match times are shown in the `TIMEZONE` sett
 (Europe/Paris by default).
 
 The agent answers in the language of the question, casually (it uses "tu" in French),
-concisely and only from the synced data.
+directly and briefly (no comments on the data), and only from the synced data.
 
 ## Stack
 
