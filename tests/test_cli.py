@@ -1,3 +1,4 @@
+import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -7,8 +8,10 @@ import pytest
 
 from esport_agent import cli
 from esport_agent.agent import AgentError
-from esport_agent.cli import repl
+from esport_agent.cli import parse_tool_call, repl, tools_repl
 from esport_agent.config import Settings
+from esport_agent.db import connect, init_schema, replace_teams
+from tests.factories import make_player, make_team
 
 
 def feed_input(monkeypatch: pytest.MonkeyPatch, *lines: str) -> None:
@@ -69,7 +72,7 @@ def test_main_requires_the_anthropic_key(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(cli, "get_settings", lambda: settings)
 
     with pytest.raises(SystemExit, match="ANTHROPIC_API_KEY"):
-        cli.main()
+        cli.main([])
 
 
 def test_main_requires_a_synced_database(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -79,5 +82,61 @@ def test_main_requires_a_synced_database(monkeypatch: pytest.MonkeyPatch, tmp_pa
     monkeypatch.setattr(cli, "get_settings", lambda: settings)
 
     with pytest.raises(SystemExit, match=r"esport_agent\.sync"):
-        cli.main()
+        cli.main([])
     assert not (tmp_path / "missing.db").exists()
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        ("get_team_roster", ("get_team_roster", {})),
+        ("get_team_roster team=KC", ("get_team_roster", {"team": "KC"})),
+        (
+            'get_team_recent_results team="Karmine Corp" limit=3',
+            ("get_team_recent_results", {"team": "Karmine Corp", "limit": 3}),
+        ),
+    ],
+)
+def test_parse_tool_call(line: str, expected: tuple[str, dict[str, object]]) -> None:
+    assert parse_tool_call(line) == expected
+
+
+@pytest.mark.parametrize("line", ["get_team_roster KC", "get_team_roster =KC", 'x team="open'])
+def test_parse_tool_call_rejects_malformed_input(line: str) -> None:
+    with pytest.raises(ValueError):
+        parse_tool_call(line)
+
+
+def test_tools_repl_calls_tools_without_claude(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    conn: sqlite3.Connection,
+    settings: Settings,
+) -> None:
+    replace_teams(conn, [make_team("kc", (make_player("Caliste", "bottom"),), name="Karmine Corp")])
+    feed_input(monkeypatch, "help", "get_team_roster", "nope", "get_team_roster KC", "quit")
+
+    tools_repl(conn, settings)
+
+    output = capsys.readouterr().out
+    assert "- get_team_roster (team):" in output
+    assert '"summoner_name": "Caliste"' in output
+    assert "Error: Unknown tool: nope" in output
+    assert "Error: Expected key=value" in output
+
+
+def test_main_tools_mode_needs_no_anthropic_key(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_path = tmp_path / "esport.db"
+    with connect(db_path) as conn:
+        init_schema(conn)
+    conn.close()
+    settings = Settings(_env_file=None, anthropic_api_key=None, sqlite_path=db_path)
+    monkeypatch.setattr(cli, "get_settings", lambda: settings)
+    calls: list[Settings] = []
+    monkeypatch.setattr(cli, "tools_repl", lambda _conn, s: calls.append(s))
+
+    cli.main(["--tools"])
+
+    assert calls == [settings]
