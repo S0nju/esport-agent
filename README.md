@@ -1,80 +1,152 @@
 # esport-agent
 
-Conversational esports agent that answers natural-language questions about League of Legends:
-a team's roster, its next match, its recent results. It uses Claude with tool calling (no RAG):
-Claude picks a tool, the tool reads a local SQLite database, and Claude writes the answer.
+[![CI](https://github.com/S0nju/esport-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/S0nju/esport-agent/actions/workflows/ci.yml)
+![Python 3.14](https://img.shields.io/badge/python-3.14-blue)
+![License: MIT](https://img.shields.io/badge/license-MIT-green)
 
-The MVP focuses on Karmine Corp (the default team), but the team is always a parameter.
-The agent will be exposed through a Discord bot; for now, only a test CLI exists.
+A conversational agent that answers natural-language questions about League of Legends
+esports: a team's roster, its next match, its latest results. It is built on Claude with
+tool calling over a local database kept up to date from the lolesports API, and is meant to
+run as a Discord bot. Today it runs as a command-line app.
 
-## What the agent can answer
+## Example
 
-| Tool | Example question |
+```text
+> Roster de Vitality ?
+Roster de **Team Vitality** (LEC) :
+- Top : Naak Nako
+- Jungle : Lyncas
+- Mid : FIESTA
+- Mid : Humanoid
+- Bottom : Carzzy
+- Support : Fleshy
+- Sans rôle : Lukezy
+[claude-haiku-4-5-20251001 · 2 calls · 3,427 in / 135 out tokens · ≈ $0.0041]
+```
+
+Real output, with data from September 2026. The line in brackets is the usage report
+printed after each answer.
+
+## Features
+
+- **Three questions**: current roster, next match (or the match being played), latest
+  results with scores from the team's point of view.
+- **Flexible team names**: full name, short name or code ("Karmine Corp", "KC"). A short
+  name shared by several teams resolves to the one playing in the preferred leagues
+  ("Vitality" is Team Vitality, not Vitality.Bee); if that does not settle it, the agent
+  asks which team you mean.
+- **League-aware**: naming a league picks the organization's team that plays there and keeps
+  only that league's matches ("KC LFL" is Karmine Corp Blue, "G2 at Worlds" shows G2's
+  Worlds matches).
+- **Multilingual**: answers in the language of the question, with match times in the
+  configured time zone and relative dates ("tonight", "in 3 days").
+- **Grounded**: every fact comes from the database; missing data (coaches, nationalities)
+  is reported as missing instead of guessed.
+- **Cost-aware**: each answer shows the model used, the tokens and an estimated cost (about
+  $0.004 per question with Claude Haiku 4.5).
+
+## Architecture
+
+```text
+ lolesports API ──► data/lolesports.py ──► sync.py ──► SQLite ◄── tools/ ◄──► Claude
+ (unofficial)       typed client,          one                    roster,     (agent.py)
+                    validated responses    transaction            next match,     │
+                                                                  results         ▼
+                                                                          CLI / Discord bot
+```
+
+| Module | Role |
 |---|---|
-| `get_team_roster` | "Who plays for KC?" |
-| `get_team_next_match` | "When does G2 play next?" |
-| `get_team_recent_results` | "How did Karmine Corp do in its last 3 matches?" |
+| `data/` | The only place where HTTP calls are made. `lolesports.py` is a typed client whose responses are validated with pydantic, so a change in the unofficial API fails loudly. |
+| `sync.py` | Fetches every team with its roster and the schedule of the configured leagues, then writes everything in a single transaction. |
+| `db/` | SQLite schema, source-agnostic records and queries (team search, next match, results). |
+| `tools/` | Tool schemas for Claude and the functions behind them: team name resolution, JSON answers, local times. They only read the database. |
+| `agent.py` | The tool-use loop: calls Claude, runs the requested tools, returns the answer with its usage. |
+| `prompts/system.md` | The system prompt, versioned separately from the code. |
+| `cli.py` | Interactive command line, with a `--tools` mode that calls the tools without Claude. |
 
-Teams can be named by full name, short name or code ("Karmine Corp", "KC"). When a short
-name matches several teams, the one playing in `PREFERRED_LEAGUES` (the LEC by default) is
-picked: "Vitality" gives Team Vitality, not Vitality.Bee. If no preferred league settles it,
-the agent asks which team you mean. Naming a league selects the organization's team that
-plays there and keeps only that league's matches: "KC LFL" gives Karmine Corp Blue, "G2 at
-Worlds" gives G2's Worlds matches. Match times are shown in the `TIMEZONE` setting
-(Europe/Paris by default).
+## Design choices
 
-The agent answers in the language of the question, casually (it uses "tu" in French),
-directly and briefly (no comments on the data), and only from the synced data.
+- **Tool calling rather than RAG.** The questions are about structured, changing data
+  (rosters, schedules, scores). Letting the model call typed functions over a database gives
+  exact answers and lets it combine them; retrieving text chunks would not.
+- **A local database instead of live API calls.** The tools never call external APIs: a
+  sync script fills SQLite ahead of time. Answers are fast and do not depend on the
+  availability or rate limits of the sources, and every source goes through the same
+  schema, which is independent of where the data comes from.
+- **Defensive handling of an unofficial API.** Responses are validated against pydantic
+  models, a failed call leaves the database untouched, duplicated entries are skipped, and
+  upcoming matches that disappear from the schedule (cancelled or moved) are removed while
+  past results are kept.
+- **Team name resolution in the tools, not in the prompt.** Exact name, code or slug first,
+  ranked to prefer active teams in a league; then partial names, settled by the preferred
+  leagues; and an explicit list of candidates when it stays ambiguous, so the model asks
+  instead of guessing.
+- **Nothing team-specific in the code.** The default team, preferred leagues, synced leagues
+  and time zone are settings: Karmine Corp is only the default value.
+- **Controlled costs.** Claude Haiku 4.5 by default, usage and cost reported per answer, and
+  for the Discord bot, slash commands that answer common questions without calling the model
+  at all.
 
-## Stack
+## Getting started
 
-- Python 3.14, [uv](https://docs.astral.sh/uv/)
-- [anthropic](https://github.com/anthropics/anthropic-sdk-python): Claude API calls
-- [pydantic-settings](https://docs.pydantic.dev/latest/concepts/pydantic_settings/): configuration
-- [httpx](https://www.python-httpx.org/): unofficial lolesports API
-- [mwrogue](https://github.com/RheingoldRiver/mwrogue): Leaguepedia (Cargo API), planned
-- SQLite (standard `sqlite3` module): local database
-- ruff, mypy (strict), pytest, pre-commit
-
-## Data
-
-The tools never call external APIs: they only read a local SQLite database, which the
-`esport_agent.sync` script fills.
-
-- **lolesports** (unofficial API, current source): every team with its roster, and the
-  schedule and results of the leagues listed in `LOLESPORTS_LEAGUES` (LEC, LFL, Worlds, MSI
-  and First Stand by default). Its history starts in 2024.
-- **Leaguepedia** (planned): player countries, coaches and staff, LFL Division 2 and the full
-  history. Its anonymous rate limits are too low for a sync, so it will need bot credentials
-  (`LEAGUEPEDIA_BOT_USERNAME` / `LEAGUEPEDIA_BOT_PASSWORD`).
-
-Each sync replaces teams and rosters, and adds or updates matches: past results are kept
-across syncs, and cancelled upcoming matches are removed.
-
-## Running locally
+Requirements: [uv](https://docs.astral.sh/uv/), an
+[Anthropic API key](https://console.anthropic.com/) for the agent (not needed for the sync
+or the `--tools` mode).
 
 ```bash
 uv sync
-cp .env.example .env              # then set ANTHROPIC_API_KEY
-uv run pre-commit install
+cp .env.example .env          # then set ANTHROPIC_API_KEY
 
-uv run python -m esport_agent.sync   # update the local database (needs LOLESPORTS_API_KEY)
-uv run python -m esport_agent.cli    # start the agent (needs ANTHROPIC_API_KEY and a synced database)
-uv run python -m esport_agent.cli --tools   # call the tools directly, without Claude (free)
+uv run python -m esport_agent.sync           # fill the local database
+uv run python -m esport_agent.cli            # ask the agent questions
+uv run python -m esport_agent.cli --tools    # call the tools directly, without Claude
 ```
-
-After each answer, the CLI shows the model used, the number of Claude calls, the tokens
-and an estimated cost, e.g. `[claude-haiku-4-5-20251001 · 2 calls · 3,412 in / 187 out
-tokens · ≈ $0.0043]`. The Usage page of the Anthropic console remains the source of truth.
 
 In `--tools` mode, type `help` for the list of tools, then for example
-`get_team_recent_results team="Karmine Corp" limit=3`. No Anthropic key is needed: it is the
-free way to check the data and the team name resolution.
+`get_team_recent_results team="Karmine Corp" limit=3`.
 
-## Quality checks
+### Configuration
+
+Settings are read from environment variables or `.env` (see `.env.example`).
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | | Required by the agent. |
+| `LOLESPORTS_API_KEY` | public key in `.env.example` | Required by the sync. |
+| `CLAUDE_MODEL` | `claude-haiku-4-5-20251001` | Model used by the agent. |
+| `DEFAULT_TEAM` | `Karmine Corp` | Team used when a question names none. |
+| `LOLESPORTS_LEAGUES` | `["lec", "lfl", "worlds", "msi", "first_stand"]` | Leagues whose schedule is synced. |
+| `PREFERRED_LEAGUES` | `["lec"]` | Leagues used to pick a team from a short name. |
+| `TIMEZONE` | `Europe/Paris` | Time zone of match times and of today's date. |
+| `SQLITE_PATH` | `esport_agent.db` | Local database file. |
+
+## Development
 
 ```bash
-uv run ruff check . && uv run ruff format .
-uv run mypy src tests
-uv run pytest
+uv run ruff check . && uv run ruff format .   # lint and formatting
+uv run mypy src tests                         # strict type checking
+uv run pytest                                 # tests, with HTTP and Claude calls mocked
+uv run pre-commit install                     # run ruff on every commit
 ```
+
+The CI runs the same checks on every pull request. `main` is protected: changes go through
+pull requests with a green CI, and dependencies are kept up to date by Dependabot.
+
+## Roadmap
+
+- **Discord bot**: free slash commands (`/roster`, `/next`, `/results`) that call the tools
+  directly, and an `/ask` command for free-text questions with per-user quotas.
+- **Leaguepedia**: player nationalities, coaches, substitutes, LFL Division 2 and the full
+  match history.
+- Configurable logging.
+
+## Disclaimer
+
+This project is not affiliated with or endorsed by Riot Games. It relies on the unofficial
+lolesports API, which may change without notice. League of Legends is a trademark of Riot
+Games, Inc.
+
+## License
+
+[MIT](LICENSE). Built by Kelian Ninet ([@S0nju](https://github.com/S0nju)).
