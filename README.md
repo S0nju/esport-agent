@@ -13,15 +13,23 @@ run as a Discord bot. Today it runs as a command-line app.
 
 ```text
 > Roster de Vitality ?
-Roster de **Team Vitality** (LEC) :
+Roster de **Team Vitality** :
 - Top : Naak Nako
 - Jungle : Lyncas
 - Mid : FIESTA
 - Mid : Humanoid
-- Bottom : Carzzy
+- Bot : Carzzy
 - Support : Fleshy
-- Sans rôle : Lukezy
-[claude-haiku-4-5-20251001 · 2 calls · 3,427 in / 135 out tokens · ≈ $0.0041]
+
+Le roster peut inclure des remplaçants ou des joueurs inactifs.
+[claude-haiku-4-5-20251001 · 2 calls · 4,039 in / 139 out tokens · ≈ $0.0047]
+
+> What were KC's last 3 results?
+Last results of **Karmine Corp**:
+- 19/09: ❌ 0-3 vs Movistar KOI (LEC, Playoffs)
+- 06/09: ❌ 1-3 vs G2 Esports (LEC, Playoffs)
+- 05/09: ✅ 3-1 vs GIANTX (LEC, Playoffs)
+[claude-haiku-4-5-20251001 · 2 calls · 4,046 in / 177 out tokens · ≈ $0.0049]
 ```
 
 Real output, with data from September 2026. The line in brackets is the usage report
@@ -30,7 +38,8 @@ printed after each answer.
 ## Features
 
 - **Three questions**: current roster, next match (or the match being played), latest
-  results with scores from the team's point of view.
+  results with scores from the team's point of view. Rosters leave out members without a
+  role and say when the source lists several players for a role.
 - **Flexible team names**: full name, short name or code ("Karmine Corp", "KC"). A short
   name shared by several teams resolves to the one playing in the preferred leagues
   ("Vitality" is Team Vitality, not Vitality.Bee); if that does not settle it, the agent
@@ -43,7 +52,7 @@ printed after each answer.
 - **Grounded**: every fact comes from the database; missing data (coaches, nationalities)
   is reported as missing instead of guessed.
 - **Cost-aware**: each answer shows the model used, the tokens and an estimated cost (about
-  $0.004 per question with Claude Haiku 4.5).
+  $0.005 per question with Claude Haiku 4.5).
 
 ## Architecture
 
