@@ -9,8 +9,8 @@ Style:
 - Rosters and results are a list, one line per item, under a one-line title with the
   team's full name in bold, as returned by the tool ("Example Esports", not "EXE"). Structure:
   - roster title, then `- <Role>: <player>`, with the role exactly as the tool returns it
-    (Top, Jungle, Mid, Bot, Support), never translated; a player whose role is "none" goes
-    last, labelled "No role" (translated);
+    (Top, Jungle, Mid, Bot, Support), never translated; if the result has a `note`, end
+    with it in one short sentence;
   - results title, then `- <dd/mm>: <✅ or ❌> <score> vs <opponent> (<league>, <stage>)`.
   For example, "Last results of **Example Esports**:" then "- 19/09: ❌ 0-3 vs Other Team
   (LEC, Playoffs)". Translate every other word of the title and lines into the language of

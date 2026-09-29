@@ -50,14 +50,9 @@ def test_roster_is_sorted_by_role(db: sqlite3.Connection) -> None:
 
     assert "error" not in result
     assert result["team"] == {"name": "Karmine Corp", "code": "KC", "league": "LEC"}
-    assert [p["role"] for p in result["players"]] == [
-        "Top",
-        "Jungle",
-        "Mid",
-        "Bot",
-        "Support",
-        "none",
-    ]
+    assert [p["role"] for p in result["players"]] == ["Top", "Jungle", "Mid", "Bot", "Support"]
+    assert "Bench" not in [p["summoner_name"] for p in result["players"]]
+    assert "note" not in result
 
 
 def test_unknown_team(db: sqlite3.Connection) -> None:
@@ -419,3 +414,31 @@ def test_execute_tool_passes_the_league(db: sqlite3.Connection) -> None:
     assert isinstance(result, dict) and isinstance(ignored, dict)
     assert result["team"]["name"] == "Karmine Corp Blue"
     assert ignored["team"]["name"] == "Karmine Corp"
+
+
+def test_roster_notes_repeated_roles(db: sqlite3.Connection) -> None:
+    replace_teams(
+        db,
+        [
+            make_team(
+                "vit",
+                (
+                    make_player("FIESTA", "mid"),
+                    make_player("Humanoid", "mid"),
+                    make_player("Carzzy", "bottom"),
+                ),
+                name="Team Vitality",
+                code="VIT",
+            )
+        ],
+    )
+
+    result = get_team_roster(db, "VIT")
+
+    assert "error" not in result
+    assert [(p["role"], p["summoner_name"]) for p in result["players"]] == [
+        ("Mid", "FIESTA"),
+        ("Mid", "Humanoid"),
+        ("Bot", "Carzzy"),
+    ]
+    assert result.get("note") == handlers.INACTIVE_PLAYERS_NOTE

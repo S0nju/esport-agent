@@ -31,7 +31,8 @@ TOOLS: list[ToolParam] = [
         "name": "get_team_roster",
         "description": (
             "Return the current roster of a League of Legends team: players with their "
-            "in-game name, real name and role."
+            "in-game name, real name and role. A note is added when the source lists several "
+            "players for a role (substitutes or inactive players)."
         ),
         "input_schema": {
             "type": "object",

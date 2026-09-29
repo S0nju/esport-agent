@@ -9,7 +9,7 @@ import sqlite3
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 from zoneinfo import ZoneInfo
 
 from esport_agent.config import Settings
@@ -45,7 +45,13 @@ ROLE_LABELS = {
     "bottom": "Bot",
     "support": "Support",
 }
-"""How roles are shown to users. Any other source role (e.g. "none") is returned as is."""
+"""How roles are shown to users. Players with any other source role ("none") are left out of
+rosters: they are staff or inactive members, since a starter always has a role."""
+
+INACTIVE_PLAYERS_NOTE = (
+    "The source lists several players for some roles: the roster may include substitutes "
+    "or inactive players."
+)
 
 
 class UnknownToolError(ValueError):
@@ -87,7 +93,7 @@ class PlayerInfo(TypedDict):
     first_name: str
     last_name: str
     role: str
-    """Top, Jungle, Mid, Bot or Support; "none" when the source gives no role."""
+    """Top, Jungle, Mid, Bot or Support."""
 
 
 class MatchInfo(TypedDict):
@@ -118,6 +124,8 @@ class ToolError(TypedDict):
 class RosterResponse(TypedDict):
     team: TeamInfo
     players: list[PlayerInfo]
+    note: NotRequired[str]
+    """Only present when a role has several players."""
 
 
 class NextMatchResponse(TypedDict):
@@ -136,27 +144,36 @@ def get_team_roster(
     preferred_leagues: Sequence[str] = (),
     league: str | None = None,
 ) -> RosterResponse | ToolError:
-    """Return the current roster of `team`, main roles first.
+    """Return the current roster of `team`, main roles first, without role-less members.
 
-    `league` picks the team of the organization playing there ("KC" + "LFL").
+    `league` picks the team of the organization playing there ("KC" + "LFL"). The source
+    does not tell starters from substitutes or inactive players: when a role has several
+    players, a `note` says so.
     """
     found = _resolve(conn, team, league, preferred_leagues)
     if isinstance(found, dict):
         return found
     resolved, _ = found
-    players = sorted(resolved.players, key=lambda p: (_role_rank(p.role), p.summoner_name))
-    return {
+    players = sorted(
+        (p for p in resolved.players if p.role in ROLE_LABELS),
+        key=lambda p: (_role_rank(p.role), p.summoner_name),
+    )
+    response: RosterResponse = {
         "team": _team_info(conn, resolved),
         "players": [
             {
                 "summoner_name": p.summoner_name,
                 "first_name": p.first_name,
                 "last_name": p.last_name,
-                "role": ROLE_LABELS.get(p.role, p.role),
+                "role": ROLE_LABELS[p.role],
             }
             for p in players
         ],
     }
+    roles = [p.role for p in players]
+    if len(roles) != len(set(roles)):
+        response["note"] = INACTIVE_PLAYERS_NOTE
+    return response
 
 
 def get_team_next_match(
