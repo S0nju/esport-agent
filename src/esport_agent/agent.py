@@ -18,6 +18,10 @@ from esport_agent.usage import Usage
 logger = logging.getLogger(__name__)
 
 MAX_TOKENS = 4096
+
+LANGUAGE_REMINDER = "(Answer in the language of my question above.)"
+"""Sent right after the question: the context (French default team and time zone) otherwise
+pulls English questions towards French answers."""
 MAX_TOOL_ROUNDS = 5
 
 
@@ -66,10 +70,19 @@ class Agent:
             {"type": "text", "text": self._system_prompt},
             {
                 "type": "text",
-                "text": f"Current date and time: {now:%A %Y-%m-%d %H:%M} ({tz.key}).",
+                # The UTC offset rather than the zone name, which would hint at a language.
+                "text": f"Current date and time: {now:%A %Y-%m-%d %H:%M} (UTC{now:%:z}).",
             },
         ]
-        messages: list[MessageParam] = [{"role": "user", "content": question}]
+        messages: list[MessageParam] = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": question},
+                    {"type": "text", "text": LANGUAGE_REMINDER},
+                ],
+            }
+        ]
         tool_context = ToolContext.from_settings(self._settings, now)
         usage = Usage()
 
