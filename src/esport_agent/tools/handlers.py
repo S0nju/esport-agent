@@ -38,6 +38,15 @@ be stored as unstarted, while it is being played.
 
 ROLE_ORDER = ("top", "jungle", "mid", "bottom", "support")
 
+ROLE_LABELS = {
+    "top": "Top",
+    "jungle": "Jungle",
+    "mid": "Mid",
+    "bottom": "Bot",
+    "support": "Support",
+}
+"""How roles are shown to users. Any other source role (e.g. "none") is returned as is."""
+
 
 class UnknownToolError(ValueError):
     """Claude asked for a tool that does not exist."""
@@ -78,6 +87,7 @@ class PlayerInfo(TypedDict):
     first_name: str
     last_name: str
     role: str
+    """Top, Jungle, Mid, Bot or Support; "none" when the source gives no role."""
 
 
 class MatchInfo(TypedDict):
@@ -142,7 +152,7 @@ def get_team_roster(
                 "summoner_name": p.summoner_name,
                 "first_name": p.first_name,
                 "last_name": p.last_name,
-                "role": p.role,
+                "role": ROLE_LABELS.get(p.role, p.role),
             }
             for p in players
         ],

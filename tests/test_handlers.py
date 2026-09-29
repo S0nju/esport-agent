@@ -51,11 +51,11 @@ def test_roster_is_sorted_by_role(db: sqlite3.Connection) -> None:
     assert "error" not in result
     assert result["team"] == {"name": "Karmine Corp", "code": "KC", "league": "LEC"}
     assert [p["role"] for p in result["players"]] == [
-        "top",
-        "jungle",
-        "mid",
-        "bottom",
-        "support",
+        "Top",
+        "Jungle",
+        "Mid",
+        "Bot",
+        "Support",
         "none",
     ]
 

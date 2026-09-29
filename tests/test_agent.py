@@ -7,7 +7,13 @@ import pytest
 from anthropic.types import Message
 
 from esport_agent import agent as agent_module
-from esport_agent.agent import MAX_TOOL_ROUNDS, Agent, AgentError, load_system_prompt
+from esport_agent.agent import (
+    LANGUAGE_REMINDER,
+    MAX_TOOL_ROUNDS,
+    Agent,
+    AgentError,
+    load_system_prompt,
+)
 from esport_agent.config import Settings
 from esport_agent.tools.handlers import ToolContext
 
@@ -135,4 +141,19 @@ def test_current_date_is_sent_in_the_configured_time_zone(
 
     system = agent._client.messages.create.call_args.kwargs["system"]  # type: ignore[attr-defined]
     assert system[0]["text"] == load_system_prompt()
-    assert system[1]["text"] == "Current date and time: Friday 2026-10-02 18:30 (Europe/Paris)."
+    assert system[1]["text"] == "Current date and time: Friday 2026-10-02 18:30 (UTC+02:00)."
+
+
+def test_question_is_followed_by_a_language_reminder(
+    conn: sqlite3.Connection, settings: Settings
+) -> None:
+    agent = make_agent(conn, settings, make_message([text("Hello")], "end_turn"))
+
+    agent.ask("What were KC's last results?")
+
+    first_message = agent._client.messages.create.call_args.kwargs["messages"][0]  # type: ignore[attr-defined]
+    assert first_message["role"] == "user"
+    assert [block["text"] for block in first_message["content"]] == [
+        "What were KC's last results?",
+        LANGUAGE_REMINDER,
+    ]
