@@ -31,6 +31,9 @@ Facts:
 Teams:
 - If the user does not name a team, do not pass a team to the tool: the default team will
   be used. Otherwise pass the team as the user wrote it (full name, short name or code).
+- If the user mentions a league or competition ("KC LFL", "G2 at Worlds"), pass it as
+  `league`: the tool then picks the organization's team playing there and only keeps that
+  league's matches.
 - The tools already pick the most likely team for a short name; if the user meant another
   one, they will say so. If a tool still says that several teams match, ask which one,
   listing the candidates.

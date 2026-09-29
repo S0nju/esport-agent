@@ -147,42 +147,92 @@ def find_teams(conn: sqlite3.Connection, query: str) -> tuple[list[TeamRecord], 
     ).fetchall()
     if exact:
         return [_team_from_row(conn, row) for row in exact], True
-    partial = conn.execute(
+    return find_teams_by_name_part(conn, query), False
+
+
+def find_teams_by_name_part(conn: sqlite3.Connection, text: str) -> list[TeamRecord]:
+    """Return the teams whose name contains `text`, case-insensitively, most relevant first."""
+    rows = conn.execute(
         "SELECT * FROM teams WHERE name LIKE ? ESCAPE '\\'" + _TEAM_RANKING + " LIMIT ?",
-        (f"%{_escape_like(query)}%", MAX_TEAM_CANDIDATES),
+        (f"%{_escape_like(text.strip())}%", MAX_TEAM_CANDIDATES),
     ).fetchall()
-    return [_team_from_row(conn, row) for row in partial], False
+    return [_team_from_row(conn, row) for row in rows]
 
 
-def next_match(conn: sqlite3.Connection, team_name: str, since: datetime) -> MatchRecord | None:
-    """Return `team_name`'s first unfinished match scheduled at or after `since`."""
-    row = conn.execute(
+def find_leagues(conn: sqlite3.Connection, text: str) -> set[str]:
+    """Return the slugs of the stored leagues whose slug is `text` or whose name contains it.
+
+    "LFL" matches the slug `lfl`, "Ligue" matches the name "La Ligue Française".
+    """
+    text = text.strip()
+    rows = conn.execute(
         """
+        SELECT DISTINCT league_slug FROM matches
+        WHERE league_slug = :text COLLATE NOCASE OR league_name LIKE :pattern ESCAPE '\\'
+        """,
+        {"text": text, "pattern": f"%{_escape_like(text)}%"},
+    ).fetchall()
+    return {str(row["league_slug"]) for row in rows}
+
+
+def next_match(
+    conn: sqlite3.Connection,
+    team_name: str,
+    since: datetime,
+    league_slugs: Collection[str] = (),
+) -> MatchRecord | None:
+    """Return `team_name`'s first unfinished match scheduled at or after `since`.
+
+    With `league_slugs`, only matches of these leagues are considered.
+    """
+    league_filter, league_params = _league_filter(league_slugs)
+    row = conn.execute(
+        f"""
         SELECT * FROM matches
-        WHERE (team1_name = :team COLLATE NOCASE OR team2_name = :team COLLATE NOCASE)
+        WHERE (team1_name = ? COLLATE NOCASE OR team2_name = ? COLLATE NOCASE)
             AND state != 'completed'
-            AND start_time >= :since
+            AND start_time >= ?
+            {league_filter}
         ORDER BY start_time
         LIMIT 1
         """,
-        {"team": team_name, "since": _to_db_time(since)},
+        (team_name, team_name, _to_db_time(since), *league_params),
     ).fetchone()
     return _match_from_row(row) if row else None
 
 
-def recent_results(conn: sqlite3.Connection, team_name: str, limit: int) -> list[MatchRecord]:
-    """Return `team_name`'s last `limit` completed matches, most recent first."""
+def recent_results(
+    conn: sqlite3.Connection,
+    team_name: str,
+    limit: int,
+    league_slugs: Collection[str] = (),
+) -> list[MatchRecord]:
+    """Return `team_name`'s last `limit` completed matches, most recent first.
+
+    With `league_slugs`, only matches of these leagues are considered.
+    """
+    league_filter, league_params = _league_filter(league_slugs)
     rows = conn.execute(
-        """
+        f"""
         SELECT * FROM matches
-        WHERE (team1_name = :team COLLATE NOCASE OR team2_name = :team COLLATE NOCASE)
+        WHERE (team1_name = ? COLLATE NOCASE OR team2_name = ? COLLATE NOCASE)
             AND state = 'completed'
+            {league_filter}
         ORDER BY start_time DESC
-        LIMIT :limit
+        LIMIT ?
         """,
-        {"team": team_name, "limit": limit},
+        (team_name, team_name, *league_params, limit),
     ).fetchall()
     return [_match_from_row(row) for row in rows]
+
+
+def _league_filter(league_slugs: Collection[str]) -> tuple[str, tuple[str, ...]]:
+    """Return an `AND league_slug IN (...)` clause and its parameters, or nothing."""
+    if not league_slugs:
+        return "", ()
+    # Only "?" placeholders are interpolated in the query, never values.
+    placeholders = ", ".join("?" * len(league_slugs))
+    return f"AND league_slug IN ({placeholders})", tuple(league_slugs)
 
 
 def latest_league(conn: sqlite3.Connection, team_name: str) -> str | None:

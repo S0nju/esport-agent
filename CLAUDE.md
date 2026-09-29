@@ -16,7 +16,9 @@ focused on Karmine Corp, used through a CLI and later a Discord bot.
   `definitions.py` holds the schemas, `handlers.py` the tool functions and the dispatch.
   Tools accept a team name, short name or code, return JSON (an `error` with candidates
   when the team is unknown or ambiguous) and give times in the configured `TIMEZONE`.
-  A short name matching several teams resolves to the one in `PREFERRED_LEAGUES`.
+  A short name matching several teams resolves to the one in `PREFERRED_LEAGUES`. An
+  optional `league` argument picks the organization's team playing there ("KC" + "LFL")
+  and filters the matches.
 - `agent.py`: agent loop; sends today's date and time to Claude after the static system
   prompt. `prompts/system.md`: versioned system prompt.
 - `usage.py`: token usage and estimated cost of the Claude calls made for one question.

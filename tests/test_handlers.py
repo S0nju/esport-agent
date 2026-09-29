@@ -207,7 +207,12 @@ def test_execute_tool_recent_results_limit(
     calls: list[int] = []
 
     def fake(
-        conn: sqlite3.Connection, team: str, limit: int, tz: ZoneInfo, leagues: object
+        conn: sqlite3.Connection,
+        team: str,
+        limit: int,
+        tz: ZoneInfo,
+        leagues: object,
+        league: object,
     ) -> dict[str, str]:
         calls.append(limit)
         return {}
@@ -328,3 +333,89 @@ def test_tool_context_from_settings(settings: Settings) -> None:
     assert ctx.now == NOW
     assert ctx.now.tzinfo == ctx.tz
     assert ctx.preferred_leagues == ("lec",)
+
+
+def test_league_selects_the_organization_team_playing_there(db: sqlite3.Connection) -> None:
+    add_league_matches(db, "lec", "Karmine Corp")
+    add_league_matches(db, "lfl", "Karmine Corp Blue")
+
+    result = get_team_recent_results(db, "KC", 5, PARIS, league="lfl")
+
+    assert "error" not in result
+    assert result["team"]["name"] == "Karmine Corp Blue"
+    assert [r["league"] for r in result["results"]] == ["LEC"]  # make_match's league name
+
+
+def test_league_filters_the_matches(db: sqlite3.Connection) -> None:
+    upsert_matches(
+        db,
+        [
+            replace(
+                make_match("lec", start_time=NOW - DAY, team1="G2 Esports", score=(2, 0)),
+                league_slug="lec",
+            ),
+            replace(
+                make_match("worlds", start_time=NOW - 2 * DAY, team1="G2 Esports", score=(1, 0)),
+                league_slug="worlds",
+                league_name="Worlds",
+            ),
+            replace(
+                make_match("worlds-next", start_time=NOW + 3 * DAY, team1="G2 Esports"),
+                league_slug="worlds",
+                league_name="Worlds",
+            ),
+            replace(
+                make_match("lec-next", start_time=NOW + DAY, team1="G2 Esports"),
+                league_slug="lec",
+            ),
+        ],
+    )
+
+    results = get_team_recent_results(db, "G2", 5, PARIS, league="Worlds")
+    upcoming = get_team_next_match(db, "G2", NOW, PARIS, league="worlds")
+
+    assert "error" not in results
+    assert [r["league"] for r in results["results"]] == ["Worlds"]
+    assert "error" not in upcoming
+    assert upcoming["next_match"] is not None
+    assert upcoming["next_match"]["league"] == "Worlds"
+
+
+def test_team_playing_in_the_league_is_kept(db: sqlite3.Connection) -> None:
+    add_league_matches(db, "lec", "Karmine Corp")
+    add_league_matches(db, "lfl", "Karmine Corp Blue")
+
+    result = get_team_roster(db, "KC", league="lec")
+
+    assert "error" not in result
+    assert result["team"]["name"] == "Karmine Corp"
+
+
+def test_unknown_league(db: sqlite3.Connection) -> None:
+    add_league_matches(db, "lec", "Karmine Corp")
+
+    result = get_team_roster(db, "KC", league="Premier League")
+
+    assert result == {"error": "No synced league matches 'Premier League'.", "candidates": []}
+
+
+def test_no_team_of_the_organization_in_the_league(db: sqlite3.Connection) -> None:
+    add_league_matches(db, "lec", "Karmine Corp", "G2 Esports")
+
+    result = get_team_roster(db, "G2", league="lec")
+    missing = get_team_roster(db, "KCB", league="lec")
+
+    assert "error" not in result
+    assert missing == {"error": "No team matching 'KCB' plays in 'lec'.", "candidates": []}
+
+
+def test_execute_tool_passes_the_league(db: sqlite3.Connection) -> None:
+    add_league_matches(db, "lec", "Karmine Corp")
+    add_league_matches(db, "lfl", "Karmine Corp Blue")
+
+    result = run(db, "get_team_roster", {"team": "KC", "league": "LFL"})
+    ignored = run(db, "get_team_roster", {"team": "KC", "league": "  "})
+
+    assert isinstance(result, dict) and isinstance(ignored, dict)
+    assert result["team"]["name"] == "Karmine Corp Blue"
+    assert ignored["team"]["name"] == "Karmine Corp"

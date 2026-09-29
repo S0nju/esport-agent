@@ -18,7 +18,9 @@ The agent will be exposed through a Discord bot; for now, only a test CLI exists
 Teams can be named by full name, short name or code ("Karmine Corp", "KC"). When a short
 name matches several teams, the one playing in `PREFERRED_LEAGUES` (the LEC by default) is
 picked: "Vitality" gives Team Vitality, not Vitality.Bee. If no preferred league settles it,
-the agent asks which team you mean. Match times are shown in the `TIMEZONE` setting
+the agent asks which team you mean. Naming a league selects the organization's team that
+plays there and keeps only that league's matches: "KC LFL" gives Karmine Corp Blue, "G2 at
+Worlds" gives G2's Worlds matches. Match times are shown in the `TIMEZONE` setting
 (Europe/Paris by default).
 
 The agent answers in the language of the question, casually (it uses "tu" in French),
