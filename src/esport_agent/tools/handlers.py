@@ -52,6 +52,10 @@ INACTIVE_PLAYERS_NOTE = (
     "The source lists several players for some roles: the roster may include substitutes "
     "or inactive players."
 )
+MISSING_STARTERS_NOTE = (
+    "No starter is listed for {roles}: the roster may be incomplete (players not announced "
+    "yet, or substitutes only)."
+)
 
 
 class UnknownToolError(ValueError):
@@ -147,7 +151,8 @@ class RosterResponse(TypedDict):
     staff: list[StaffInfo]
     """Empty when the source gives no staff (teams without a Leaguepedia roster)."""
     note: NotRequired[str]
-    """Only present when a role has several players that are not marked as substitutes."""
+    """Only present when a role has several players that are not marked as substitutes, or
+    no starter at all."""
 
 
 class NextMatchResponse(TypedDict):
@@ -205,8 +210,14 @@ def get_team_roster(
             "ended": resolved.roster_date.isoformat() if resolved.roster_date else None,
         }
     starter_roles = [p.role for p in players if not p.is_substitute]
+    notes = []
     if len(starter_roles) != len(set(starter_roles)):
-        response["note"] = INACTIVE_PLAYERS_NOTE
+        notes.append(INACTIVE_PLAYERS_NOTE)
+    missing = [ROLE_LABELS[role] for role in ROLE_ORDER if role not in starter_roles]
+    if missing:
+        notes.append(MISSING_STARTERS_NOTE.format(roles=", ".join(missing)))
+    if notes:
+        response["note"] = " ".join(notes)
     return response
 
 

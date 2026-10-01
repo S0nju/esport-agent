@@ -441,7 +441,9 @@ def test_roster_notes_repeated_roles(db: sqlite3.Connection) -> None:
         ("Mid", "Humanoid"),
         ("Bot", "Carzzy"),
     ]
-    assert result.get("note") == handlers.INACTIVE_PLAYERS_NOTE
+    note = result.get("note", "")
+    assert note.startswith(handlers.INACTIVE_PLAYERS_NOTE)
+    assert "No starter is listed for Top, Jungle, Support" in note
 
 
 def test_roster_gives_real_names_countries_substitutes_and_staff(db: sqlite3.Connection) -> None:
@@ -469,7 +471,8 @@ def test_roster_gives_real_names_countries_substitutes_and_staff(db: sqlite3.Con
     assert result["staff"] == [
         {"name": "Reapered", "real_name": "Bok Han-gyu", "role": "Coach", "country": None}
     ]
-    assert "note" not in result  # A substitute is not a duplicated role.
+    # A substitute is not a duplicated role, nor a starter.
+    assert result.get("note") == handlers.MISSING_STARTERS_NOTE.format(roles="Top, Jungle, Mid")
 
 
 def test_roster_flags_a_last_known_roster(db: sqlite3.Connection) -> None:
@@ -493,3 +496,14 @@ def test_roster_flags_a_last_known_roster(db: sqlite3.Connection) -> None:
     assert "error" not in current
     assert current["active"] is True
     assert "last_known_roster" not in current
+
+
+def test_full_roster_has_no_note(db: sqlite3.Connection) -> None:
+    roles = ("top", "jungle", "mid", "bottom", "support")
+    players = tuple(make_player(f"P{i}", role) for i, role in enumerate(roles))
+    replace_teams(db, [make_team("kc", players, name="Karmine Corp", code="KC")])
+
+    result = get_team_roster(db, "KC")
+
+    assert "error" not in result
+    assert "note" not in result
