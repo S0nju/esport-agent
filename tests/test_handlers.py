@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from esport_agent.config import Settings
-from esport_agent.db import replace_teams, upsert_matches
+from esport_agent.db import StaffRecord, replace_teams, upsert_matches
 from esport_agent.tools import handlers
 from esport_agent.tools.handlers import (
     ToolContext,
@@ -442,3 +442,31 @@ def test_roster_notes_repeated_roles(db: sqlite3.Connection) -> None:
         ("Bot", "Carzzy"),
     ]
     assert result.get("note") == handlers.INACTIVE_PLAYERS_NOTE
+
+
+def test_roster_gives_real_names_countries_substitutes_and_staff(db: sqlite3.Connection) -> None:
+    team = replace(
+        make_team("kc", name="Karmine Corp", code="KC"),
+        players=(
+            replace(make_player("Busio", "support"), first_name="Alan Cwalina", last_name=""),
+            replace(make_player("Caliste", "bottom"), country="France"),
+            replace(make_player("Backup", "bottom"), is_substitute=True),
+        ),
+        staff=(StaffRecord(name="Reapered", real_name="Bok Han-gyu", role="Coach"),),
+    )
+    replace_teams(db, [team])
+
+    result = get_team_roster(db, "KC")
+
+    assert "error" not in result
+    assert [(p["summoner_name"], p["role"], p["substitute"]) for p in result["players"]] == [
+        ("Caliste", "Bot", False),
+        ("Busio", "Support", False),
+        ("Backup", "Bot", True),
+    ]
+    assert result["players"][1]["real_name"] == "Alan Cwalina"
+    assert result["players"][0]["country"] == "France"
+    assert result["staff"] == [
+        {"name": "Reapered", "real_name": "Bok Han-gyu", "role": "Coach", "country": None}
+    ]
+    assert "note" not in result  # A substitute is not a duplicated role.
