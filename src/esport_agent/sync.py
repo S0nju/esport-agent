@@ -200,13 +200,16 @@ def enrich_rosters(
         return teams
     logger.info(
         "Leaguepedia rosters: %d teams matched by alias, %d by name, %d by code (%d of them"
-        " with a last known roster only), %d unmatched: %s",
+        " with a last known roster only), %d unmatched: %s; %d substitutes flagged, %d"
+        " inactive or loaned out players left out",
         stats.by_alias,
         stats.by_name,
         stats.by_code,
         stats.last_known,
         len(stats.unmatched),
         ", ".join(stats.unmatched) or "none",
+        stats.substitutes,
+        stats.away,
     )
     return enriched
 

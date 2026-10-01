@@ -5,6 +5,7 @@ import pytest
 
 from esport_agent.data.leaguepedia import (
     LeaguepediaPlayer,
+    LeaguepediaRosterJoin,
     LeaguepediaTeam,
     LeaguepediaTournamentPlayer,
 )
@@ -16,16 +17,30 @@ TODAY = date(2026, 10, 1)
 
 
 def wiki_player(
-    player_id: str, team: str, role: str, *, sub: bool = False, country: str | None = "France"
+    player_id: str, team: str, role: str, *, country: str | None = "France", page: str = ""
 ) -> LeaguepediaPlayer:
     return LeaguepediaPlayer.model_validate(
         {
+            "Page": page or player_id,
             "ID": player_id,
             "Name": f"{player_id} Real",
             "Team": team,
             "Role": role,
             "Country": country or "",
-            "IsSubstitute": "1" if sub else "0",
+        }
+    )
+
+
+def join(
+    player: str, team: str, joined: str, *, modifier: str = "", status: str = ""
+) -> LeaguepediaRosterJoin:
+    return LeaguepediaRosterJoin.model_validate(
+        {
+            "Date": f"{joined} 00:00:00",
+            "Player": player,
+            "Team": team,
+            "RoleModifier": modifier,
+            "Status": status,
         }
     )
 
@@ -46,10 +61,13 @@ def wiki_team(
 def registration(
     player: str, team: str, role: str, tournament: str, start: str, end: str = ""
 ) -> LeaguepediaTournamentPlayer:
+    name = player.split(" (")[0]  # The page "Maru (Lee Sang-hun)" is the player "Maru".
     return LeaguepediaTournamentPlayer.model_validate(
         {
             "Team": team,
             "Player": player,
+            "DisplayName": name,
+            "RealName": f"{name} Real",
             "Role": role,
             "Country": "Turkey",
             "Tournament": tournament,
@@ -67,10 +85,13 @@ class FakeWiki:
         players: Iterable[LeaguepediaPlayer] = (),
         teams: Iterable[LeaguepediaTeam] = (),
         registrations: Iterable[LeaguepediaTournamentPlayer] = (),
+        joins: Iterable[LeaguepediaRosterJoin] = (),
     ) -> None:
         self.players = list(players)
         self.teams = list(teams)
         self.registrations = list(registrations)
+        self.joins = list(joins)
+        self.join_queries: list[list[str]] = []
         self.player_queries: list[list[str]] = []
         self.since: date | None = None
 
@@ -84,6 +105,12 @@ class FakeWiki:
     def fetch_teams_by_short(self, codes: Iterable[str]) -> list[LeaguepediaTeam]:
         keys = {normalize(code) for code in codes}
         return [t for t in self.teams if normalize(t.short) in keys]
+
+    def fetch_roster_joins(self, teams: Iterable[str]) -> list[LeaguepediaRosterJoin]:
+        wanted = list(teams)
+        self.join_queries.append(wanted)
+        keys = {normalize(name) for name in wanted}
+        return [j for j in self.joins if normalize(j.team) in keys]
 
     def fetch_tournament_rosters(
         self, teams: Iterable[str], since: date
@@ -110,10 +137,11 @@ def test_match_by_name_replaces_the_roster_and_adds_staff() -> None:
     wiki = FakeWiki(
         [
             wiki_player("Bin", "Bilibili Gaming", "Top"),
-            wiki_player("Sub", "Bilibili Gaming", "Mid", sub=True, country=None),
+            wiki_player("Sub", "Bilibili Gaming", "Mid", country=None),
             wiki_player("Coach1", "Bilibili Gaming", "Coach"),
             wiki_player("Streamy", "Bilibili Gaming", "Streamer"),
-        ]
+        ],
+        joins=[join("Sub", "Bilibili Gaming", "2026-01-10", modifier="Sub")],
     )
 
     enriched, stats = enrich_teams(teams, {"BILIBILI GAMING": "BLG"}, wiki, today=TODAY)
@@ -128,6 +156,7 @@ def test_match_by_name_replaces_the_roster_and_adds_staff() -> None:
     assert team.players[0].first_name == "Bin Real"
     assert [(s.name, s.role) for s in team.staff] == [("Coach1", "Coach")]
     assert (stats.by_name, stats.by_code, stats.unmatched) == (1, 0, ())
+    assert wiki.join_queries == [["Bilibili Gaming"]]
 
 
 def test_match_by_unique_active_code_uses_the_page_name() -> None:
@@ -187,7 +216,14 @@ def test_team_without_current_roster_gets_its_last_tournament_roster() -> None:
             registration("Ragner", "Joblife", "Top,Bot", "LFL Summer", "2026-07-21", "2026-08-06"),
             registration("Vertigo", "Joblife", "Top", "LFL Summer", "2026-07-21", "2026-08-06"),
             registration("Ragner", "Joblife", "Top", "LFL Playoffs", "2026-08-12", "2026-09-02"),
-            registration("Kofte", "Joblife", "Mid", "LFL Playoffs", "2026-08-12", "2026-09-02"),
+            registration(
+                "Kofte (Turkish Player)",
+                "Joblife",
+                "Mid",
+                "LFL Playoffs",
+                "2026-08-12",
+                "2026-09-02",
+            ),
             registration("Arkhe", "Joblife", "Coach", "LFL Playoffs", "2026-08-12", "2026-09-02"),
         ]
     )
@@ -195,6 +231,8 @@ def test_team_without_current_roster_gets_its_last_tournament_roster() -> None:
     enriched, stats = enrich_teams(teams, {"Joblife": "JL"}, wiki, today=TODAY)
 
     team = enriched[0]
+    assert team.players[1].first_name == "Kofte Real"
+    assert team.staff[0].real_name == "Arkhe Real"
     assert not team.roster_active
     assert team.roster_tournament == "LFL Playoffs"
     assert team.roster_date == date(2026, 9, 2)
@@ -275,3 +313,69 @@ def test_staff_only_page_prefers_the_last_tournament_roster() -> None:
     assert not enriched[0].roster_active
     assert [p.summoner_name for p in enriched[0].players] == ["Kofte"]
     assert stats.last_known == 1
+
+
+def test_last_join_status_flags_substitutes_and_leaves_out_away_players() -> None:
+    team = "LYON (2024 American Team)"
+    teams = [lolesports_team("lyon", "LYON", "LYON")]
+    wiki = FakeWiki(
+        [
+            wiki_player("Castle", team, "Top", page="Castle (Cho Hyeon-seong)"),
+            wiki_player("Dhokla", team, "Top"),
+            wiki_player("Zamudo", team, "Top"),
+            wiki_player("Trial", team, "Mid"),
+            wiki_player("Promoted", team, "Jungle"),
+            wiki_player("Loaned", team, "Bot"),
+            wiki_player("Veteran", team, "Support"),
+        ],
+        [wiki_team("LYON", "LYON", page=team)],
+        joins=[
+            # Page names may differ in case from the player's page.
+            join("castle (Cho Hyeon-seong)", team, "2026-09-08", modifier="Sub"),
+            join("Dhokla", team, "2026-01-13"),
+            join("Zamudo", team, "2026-01-12", status="inactive"),
+            join("Trial", team, "2026-09-01", status="trial"),
+            join("Promoted", team, "2026-02-01", modifier="Sub"),
+            join("Promoted", team, "2026-06-01"),
+            join("Loaned", team, "2026-03-01", status="loaned_out"),
+            join("Dhokla", "Another Team", "2026-09-30", status="inactive"),
+        ],
+    )
+
+    enriched, stats = enrich_teams(teams, {"LYON": "LYON"}, wiki, today=TODAY)
+
+    assert [(p.summoner_name, p.is_substitute) for p in enriched[0].players] == [
+        ("Castle", True),
+        ("Dhokla", False),
+        ("Trial", True),
+        ("Promoted", False),
+        ("Veteran", False),
+    ]
+    assert (stats.substitutes, stats.away) == (2, 2)
+    assert wiki.join_queries == [[team]]
+
+
+def test_no_join_query_without_current_rosters() -> None:
+    wiki = FakeWiki()
+
+    enrich_teams([lolesports_team("x", "Nowhere", "")], {"Nowhere": ""}, wiki, today=TODAY)
+
+    assert wiki.join_queries == [[]]
+
+
+def test_last_known_roster_keeps_its_staff_when_only_new_coaches_are_listed() -> None:
+    teams = [lolesports_team("jl", "Joblife", "JL")]
+    wiki = FakeWiki(
+        [wiki_player("NewCoach", "Joblife", "Coach")],
+        registrations=[
+            registration("Kofte", "Joblife", "Mid", "LFL Playoffs", "2026-08-12", "2026-09-02"),
+            registration("Arkhe", "Joblife", "Coach", "LFL Playoffs", "2026-08-12", "2026-09-02"),
+        ],
+    )
+
+    enriched, _ = enrich_teams(teams, {"Joblife": "JL"}, wiki, today=TODAY)
+
+    team = enriched[0]
+    assert not team.roster_active
+    assert [p.summoner_name for p in team.players] == ["Kofte"]
+    assert [s.name for s in team.staff] == ["Arkhe"]

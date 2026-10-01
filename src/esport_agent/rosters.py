@@ -12,7 +12,12 @@ Leaguepedia team page through a cascade, from the safest rule to the riskiest:
 A missing match costs little, a wrong one shows another team's roster: ambiguous cases are
 never matched. A matched team with no current roster on the wiki (between seasons, after
 its players left) gets the roster it registered for its last tournament, if that
-tournament started less than a year ago, flagged as no longer active.
+tournament started less than a year ago, flagged as no longer active, with the staff of
+that tournament: new coaches announced before any player do not replace it, since a
+roster is first about players.
+
+Current players are flagged as substitutes, or left out when inactive or loaned out, from
+the status of their last join to the team (`RosterChanges`).
 """
 
 import logging
@@ -25,6 +30,7 @@ from typing import Protocol
 
 from esport_agent.data.leaguepedia import (
     LeaguepediaPlayer,
+    LeaguepediaRosterJoin,
     LeaguepediaTeam,
     LeaguepediaTournamentPlayer,
 )
@@ -38,6 +44,12 @@ LANE_ROLES = {"Top": "top", "Jungle": "jungle", "Mid": "mid", "Bot": "bottom", "
 NON_STAFF_ROLES = frozenset({"Streamer", "Caster", "Creator", "Content Creator", "Influencer"})
 """Members listed on a team page who are not part of its sports staff."""
 
+SUBSTITUTE_STATUSES = frozenset({"temp_sub", "official_sub", "trial"})
+"""Join statuses of players kept as substitutes (besides the "Sub" role modifier)."""
+
+AWAY_STATUSES = frozenset({"inactive", "loaned_out", "opportunities"})
+"""Join statuses of players still listed by the team who do not play for it."""
+
 LAST_ROSTER_MAX_AGE = timedelta(days=365)
 """A last known roster older than this is ignored: it could belong to an old homonym."""
 
@@ -48,6 +60,8 @@ class RosterSource(Protocol):
     def fetch_players(self, teams: Iterable[str]) -> list[LeaguepediaPlayer]: ...
 
     def fetch_teams_by_short(self, codes: Iterable[str]) -> list[LeaguepediaTeam]: ...
+
+    def fetch_roster_joins(self, teams: Iterable[str]) -> list[LeaguepediaRosterJoin]: ...
 
     def fetch_tournament_rosters(
         self, teams: Iterable[str], since: date
@@ -60,6 +74,9 @@ class EnrichmentStats:
     by_name: int = 0
     by_code: int = 0
     last_known: int = 0
+    substitutes: int = 0
+    away: int = 0
+    """Players left out because they are inactive or loaned out."""
     unmatched: tuple[str, ...] = field(default=())
 
 
@@ -104,6 +121,7 @@ def enrich_teams(
 
     enriched: dict[str, TeamRecord] = {}
     best = _best_record_by_name(teams)
+    with_current: dict[str, list[LeaguepediaPlayer]] = {}
     without_current = []
     staff_only: dict[str, list[LeaguepediaPlayer]] = {}
     for name in tracked:
@@ -111,12 +129,19 @@ def enrich_teams(
             continue
         members = current.get(normalize(page_of.get(name, name)), [])
         if any(member.role in LANE_ROLES for member in members):
-            enriched[name] = _with_current_roster(best[name], members)
+            with_current[name] = members
         else:
             # No player listed (staff only, or nothing): look for a last known roster.
             without_current.append(name)
             if members:
                 staff_only[name] = members
+
+    statuses = _last_joins(source.fetch_roster_joins(m[0].team for m in with_current.values()))
+    substitutes = away = 0
+    for name, members in with_current.items():
+        enriched[name], subs, left_out = _with_current_roster(best[name], members, statuses)
+        substitutes += subs
+        away += left_out
 
     last_known = 0
     if without_current:
@@ -131,7 +156,7 @@ def enrich_teams(
                 last_known += 1
             elif name in staff_only:
                 # Still worth having the staff, next to the lolesports players.
-                enriched[name] = _with_current_roster(best[name], staff_only[name])
+                enriched[name], _, _ = _with_current_roster(best[name], staff_only[name], {})
 
     counts = defaultdict(int, dict.fromkeys(("alias", "name", "code"), 0))
     for name in enriched:
@@ -141,6 +166,8 @@ def enrich_teams(
         by_name=counts["name"],
         by_code=counts["code"],
         last_known=last_known,
+        substitutes=substitutes,
+        away=away,
         unmatched=tuple(sorted(set(tracked) - set(enriched))),
     )
     by_id = {record.id: record for record in enriched.values()}
@@ -189,11 +216,37 @@ def _rank(team: TeamRecord) -> tuple[bool, bool, int]:
     return team.status == "active", team.home_league is not None, len(team.players)
 
 
-def _with_current_roster(team: TeamRecord, members: list[LeaguepediaPlayer]) -> TeamRecord:
+def _last_joins(
+    joins: Iterable[LeaguepediaRosterJoin],
+) -> dict[tuple[str, str], LeaguepediaRosterJoin]:
+    """Return the most recent join of each (team page, player page), normalized."""
+    last: dict[tuple[str, str], LeaguepediaRosterJoin] = {}
+    for join in joins:
+        key = (normalize(join.team), normalize(join.player))
+        known = last.get(key)
+        if known is None or (join.joined or date.min) > (known.joined or date.min):
+            last[key] = join
+    return last
+
+
+def _with_current_roster(
+    team: TeamRecord,
+    members: list[LeaguepediaPlayer],
+    statuses: Mapping[tuple[str, str], LeaguepediaRosterJoin],
+) -> tuple[TeamRecord, int, int]:
+    """Return the team with the wiki roster, its number of substitutes and of players left out.
+
+    A player without a recorded join (joined before the wiki tracked roster changes) counts
+    as a starter.
+    """
     players: dict[str, PlayerRecord] = {}
-    staff: dict[tuple[str, str], StaffRecord] = {}
+    away = 0
     for member in members:
         if member.role in LANE_ROLES:
+            join = statuses.get((normalize(member.team), normalize(member.page)))
+            if join and join.status in AWAY_STATUSES:
+                away += 1
+                continue
             players.setdefault(
                 member.id,
                 PlayerRecord(
@@ -203,23 +256,34 @@ def _with_current_roster(team: TeamRecord, members: list[LeaguepediaPlayer]) -> 
                     last_name="",
                     role=LANE_ROLES[member.role],
                     country=member.country,
-                    is_substitute=member.is_substitute,
+                    is_substitute=bool(
+                        join and (join.role_modifier == "Sub" or join.status in SUBSTITUTE_STATUSES)
+                    ),
                 ),
             )
-        elif member.role not in NON_STAFF_ROLES:
+    enriched = replace(
+        team,
+        # A wiki page that lists no player yet keeps the lolesports roster.
+        players=tuple(players.values()) if players else team.players,
+        staff=_staff_of(members),
+        leaguepedia_name=members[0].team,
+    )
+    substitutes = sum(p.is_substitute for p in players.values())
+    return enriched, substitutes, away
+
+
+def _staff_of(members: Iterable[LeaguepediaPlayer]) -> tuple[StaffRecord, ...]:
+    """Return the sports staff among the members of a team page (no players, no streamers)."""
+    staff: dict[tuple[str, str], StaffRecord] = {}
+    for member in members:
+        if member.role not in LANE_ROLES and member.role not in NON_STAFF_ROLES:
             staff.setdefault(
                 (member.id, member.role),
                 StaffRecord(
                     name=member.id, real_name=member.name, role=member.role, country=member.country
                 ),
             )
-    return replace(
-        team,
-        # A wiki page that lists no player yet keeps the lolesports roster.
-        players=tuple(players.values()) if players else team.players,
-        staff=tuple(staff.values()),
-        leaguepedia_name=members[0].team,
-    )
+    return tuple(staff.values())
 
 
 def _last_tournament(
@@ -253,8 +317,8 @@ def _with_last_known_roster(
                 member.player,
                 PlayerRecord(
                     id=member.player,
-                    summoner_name=member.player,
-                    first_name="",
+                    summoner_name=member.display_name,
+                    first_name=member.real_name,
                     last_name="",
                     role=lane,
                     country=member.country,
@@ -264,7 +328,10 @@ def _with_last_known_roster(
             staff.setdefault(
                 (member.player, member.role),
                 StaffRecord(
-                    name=member.player, real_name="", role=member.role, country=member.country
+                    name=member.display_name,
+                    real_name=member.real_name,
+                    role=member.role,
+                    country=member.country,
                 ),
             )
     tournament = members[0]

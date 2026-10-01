@@ -100,12 +100,16 @@ printed after each answer.
   rosters and staff from Leaguepedia. Teams are matched through a configurable alias first,
   then by name (ignoring case and accents), then by short code only when a single active
   team uses it: an ambiguous team is left unmatched and keeps its lolesports roster, since a
-  wrong match would show another team's players. If Leaguepedia is unavailable, the sync
-  still completes.
+  wrong match would show another team's players. Substitutes and inactive players are read
+  from each player's last join to the team (the wiki's roster changes), not from the
+  player pages, which never fill that field. If Leaguepedia is unavailable, the sync still
+  completes.
 - **Data with its date.** A roster is true at a given time. When a team has no current
   roster (between seasons), the agent shows the one it registered for its last tournament,
   says it is no longer active and when it dates from, instead of hiding it or passing it
-  off as current.
+  off as current. That roster is shown whole, with the staff of that tournament, even when
+  new coaches are already announced: a roster is first about players. A roster with no
+  starter for a role shows the players signed so far and says it may be incomplete.
 - **Nothing team-specific in the code.** The default team, preferred leagues, synced leagues
   and time zone are settings: Karmine Corp is only the default value.
 - **Controlled costs.** Claude Haiku 4.5 by default, usage and cost reported per answer, and

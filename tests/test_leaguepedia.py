@@ -60,12 +60,12 @@ def page(*rows: Mapping[str, str | None]) -> dict[str, Any]:
 
 def player_row(player_id: str, team: str, role: str, **extra: str) -> dict[str, str]:
     row = {
+        "Page": player_id,
         "ID": player_id,
         "Name": f"{player_id} Real Name",
         "Team": team,
         "Role": role,
         "Country": "France",
-        "IsSubstitute": "0",
     }
     row.update(extra)
     return row
@@ -173,23 +173,23 @@ def test_fetch_players_parses_players_and_staff() -> None:
         page(
             player_row("Caliste", "Karmine Corp", "Bot"),
             player_row("Reapered", "Karmine Corp", "Coach", Country="South Korea"),
-            player_row("Kameto", "Karmine Corp", "Owner", IsSubstitute="", Country=""),
-            player_row("Sub", "Karmine Corp", "Mid", IsSubstitute="1"),
+            player_row("Kameto", "Karmine Corp", "Owner", Country=""),
+            player_row("Canna", "Karmine Corp", "Top", Page="Canna (Kim Chang-dong)"),
         )
     )
     client, _ = make_client(api)
 
     players = client.fetch_players(["Karmine Corp"])
 
-    assert [(p.id, p.role, p.country, p.is_substitute) for p in players] == [
-        ("Caliste", "Bot", "France", False),
-        ("Reapered", "Coach", "South Korea", False),
-        ("Kameto", "Owner", None, False),
-        ("Sub", "Mid", "France", True),
+    assert [(p.page, p.id, p.role, p.country) for p in players] == [
+        ("Caliste", "Caliste", "Bot", "France"),
+        ("Reapered", "Reapered", "Coach", "South Korea"),
+        ("Kameto", "Kameto", "Owner", None),
+        ("Canna (Kim Chang-dong)", "Canna", "Top", "France"),
     ]
     assert players[0].name == "Caliste Real Name"
     assert api.calls[0]["where"] == 'Team IN ("Karmine Corp")'
-    assert api.calls[0]["fields"] == "ID,Name,Team,Role,Country,IsSubstitute"
+    assert api.calls[0]["fields"] == "_pageName=Page,ID,Name,Team,Role,Country"
 
 
 def test_fetch_players_splits_many_teams_into_several_queries() -> None:
@@ -268,6 +268,8 @@ def test_fetch_tournament_rosters_joins_tournaments() -> None:
             {
                 "Team": "Joblife",
                 "Player": "Ragner",
+                "DisplayName": "Ragner",
+                "RealName": "Ragner Real",
                 "Role": "Top,Bot",
                 "Country": "Turkey",
                 "Tournament": "LFL 2026 Summer Playoffs",
@@ -277,7 +279,9 @@ def test_fetch_tournament_rosters_joins_tournaments() -> None:
             },
             {
                 "Team": "Joblife",
-                "Player": "Arkhe",
+                "Player": "Arkhe (Turkish Coach)",
+                "DisplayName": None,
+                "RealName": None,
                 "Role": "Coach",
                 "Country": "",
                 "Tournament": "LFL 2026 Summer Playoffs",
@@ -290,10 +294,60 @@ def test_fetch_tournament_rosters_joins_tournaments() -> None:
 
     rows = client.fetch_tournament_rosters(["Joblife"], since=date(2025, 10, 1))
 
-    assert [(r.player, r.role, r.country, r.end) for r in rows] == [
-        ("Ragner", "Top,Bot", "Turkey", date(2026, 9, 2)),
-        ("Arkhe", "Coach", None, None),
+    assert [(r.display_name, r.real_name, r.role, r.country, r.end) for r in rows] == [
+        ("Ragner", "Ragner Real", "Top,Bot", "Turkey", date(2026, 9, 2)),
+        ("Arkhe (Turkish Coach)", "", "Coach", None, None),
     ]
     call = api.calls[0]
-    assert call["join_on"] == "TP.OverviewPage=T.OverviewPage"
+    assert call["join_on"] == "TP.OverviewPage=T.OverviewPage, TP.Link=P._pageName"
     assert call["where"] == 'TP.Team IN ("Joblife") AND T.DateStart >= "2025-10-01"'
+
+
+def test_fetch_roster_joins_reads_the_join_statuses() -> None:
+    api = FakeApi(
+        page(
+            {
+                "Date": "2026-09-08 00:00:00",
+                "Player": "Castle (Cho Hyeon-seong)",
+                "Team": "LYON (2024 American Team)",
+                "RoleModifier": "",
+                "Status": "",
+                "Date__precision": "1",
+            },
+            {
+                "Date": "2026-01-12 00:00:00",
+                "Player": "Zamudo",
+                "Team": "LYON (2024 American Team)",
+                "RoleModifier": "Sub",
+                "Status": "inactive",
+            },
+            {
+                "Date": "",
+                "Player": "Old",
+                "Team": "LYON (2024 American Team)",
+                "RoleModifier": None,
+                "Status": None,
+            },
+        )
+    )
+    client, _ = make_client(api)
+
+    joins = client.fetch_roster_joins(["LYON (2024 American Team)"])
+
+    assert [(j.player, j.joined, j.role_modifier, j.status) for j in joins] == [
+        ("Castle (Cho Hyeon-seong)", date(2026, 9, 8), "", ""),
+        ("Zamudo", date(2026, 1, 12), "Sub", "inactive"),
+        ("Old", None, "", ""),
+    ]
+    call = api.calls[0]
+    assert call["tables"] == "RosterChanges"
+    assert call["where"] == 'Team IN ("LYON (2024 American Team)") AND Direction = "Join"'
+
+
+def test_query_decodes_html_entities() -> None:
+    api = FakeApi(page({"Name": "Ian&nbsp;Victor Huang", "Team": "Rock &amp; Roll", "X": None}))
+    client, _ = make_client(api)
+
+    rows = client.query("Players", ["Name", "Team", "X"])
+
+    assert rows == [{"Name": "Ian Victor Huang", "Team": "Rock & Roll", "X": None}]
