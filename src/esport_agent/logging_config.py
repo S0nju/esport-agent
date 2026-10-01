@@ -1,4 +1,4 @@
-"""Logging setup shared by the entry points (sync, CLI, and later the Discord bot)."""
+"""Logging setup shared by the entry points (sync, CLI, Discord bot)."""
 
 import logging
 from logging.handlers import RotatingFileHandler

@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     the sync, WARNING for the CLI (so that logs do not mix with the answers)."""
     log_file: Path | None = None
     """Also write logs to this file, rotated at 5 MB."""
+    discord_bot_token: SecretStr | None = None
+    discord_guild_ids: list[int] = []
+    """Discord servers allowed to use the bot: its commands are only registered there, and
+    it leaves any other server it is added to."""
 
     @field_validator("timezone")
     @classmethod
