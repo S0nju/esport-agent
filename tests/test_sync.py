@@ -224,3 +224,15 @@ def test_main_requires_the_lolesports_key(monkeypatch: pytest.MonkeyPatch, tmp_p
 
     with pytest.raises(SystemExit, match="LOLESPORTS_API_KEY"):
         sync.main()
+
+
+def test_main_logs_at_info_by_default(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    settings = Settings(_env_file=None, lolesports_api_key=None, sqlite_path=tmp_path / "db")
+    monkeypatch.setattr(sync, "get_settings", lambda: settings)
+    calls: list[tuple[str, Path | None]] = []
+    monkeypatch.setattr(sync, "setup_logging", lambda level, file: calls.append((level, file)))
+
+    with pytest.raises(SystemExit):
+        sync.main()
+
+    assert calls == [("INFO", None)]

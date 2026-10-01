@@ -27,8 +27,10 @@ from esport_agent.db import (
     replace_teams,
     upsert_matches,
 )
+from esport_agent.logging_config import setup_logging
 
-logger = logging.getLogger(__name__)
+# Named explicitly: run with `python -m`, __name__ would be "__main__".
+logger = logging.getLogger("esport_agent.sync")
 
 MAX_NEWER_PAGES = 5
 """Schedule pages fetched after the current one, to reach upcoming matches."""
@@ -163,8 +165,8 @@ def run_sync(
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     settings = get_settings()
+    setup_logging(settings.log_level or "INFO", settings.log_file)
     try:
         api_key = require_secret(settings.lolesports_api_key, "LOLESPORTS_API_KEY")
     except MissingSettingError as exc:
