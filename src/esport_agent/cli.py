@@ -8,7 +8,6 @@ Usage:
 
 import argparse
 import json
-import logging
 import shlex
 import sqlite3
 from collections.abc import Sequence
@@ -20,6 +19,7 @@ import anthropic
 from esport_agent.agent import Agent, AgentError
 from esport_agent.config import MissingSettingError, Settings, get_settings, require_secret
 from esport_agent.db import connect, init_schema
+from esport_agent.logging_config import setup_logging
 from esport_agent.tools.definitions import TOOLS
 from esport_agent.tools.handlers import ToolContext, UnknownToolError, execute_tool
 
@@ -112,8 +112,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     args = parser.parse_args(argv)
 
-    logging.basicConfig(level=logging.WARNING)
     settings = get_settings()
+    setup_logging(settings.log_level or "WARNING", settings.log_file)
     api_key = ""
     if not args.tools:
         try:

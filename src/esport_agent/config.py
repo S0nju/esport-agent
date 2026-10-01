@@ -7,6 +7,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+
 
 class Settings(BaseSettings):
     """Application settings. Each field maps to an environment variable."""
@@ -29,6 +31,11 @@ class Settings(BaseSettings):
     ("Vitality"), the one playing in the first of these leagues is picked."""
     timezone: str = "Europe/Paris"
     """IANA time zone used to show match times and today's date to the agent."""
+    log_level: str | None = None
+    """DEBUG, INFO, WARNING or ERROR. Unset, each entry point uses its own default: INFO for
+    the sync, WARNING for the CLI (so that logs do not mix with the answers)."""
+    log_file: Path | None = None
+    """Also write logs to this file, rotated at 5 MB."""
 
     @field_validator("timezone")
     @classmethod
@@ -38,6 +45,16 @@ class Settings(BaseSettings):
         except (ZoneInfoNotFoundError, ValueError) as exc:
             raise ValueError(f"Unknown time zone: {value!r}") from exc
         return value
+
+    @field_validator("log_level")
+    @classmethod
+    def _check_log_level(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        level = value.strip().upper()
+        if level not in LOG_LEVELS:
+            raise ValueError(f"Unknown log level: {value!r} (expected one of {LOG_LEVELS})")
+        return level
 
     @property
     def tzinfo(self) -> ZoneInfo:

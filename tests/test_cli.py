@@ -159,3 +159,22 @@ def test_repl_shows_the_usage_of_a_failed_question(
     output = capsys.readouterr().out
     assert "Error: No final answer" in output
     assert "[claude-haiku-4-5 · 6 calls" in output
+
+
+@pytest.mark.parametrize(("log_level", "expected"), [(None, "WARNING"), ("DEBUG", "DEBUG")])
+def test_main_sets_up_logging(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, log_level: str | None, expected: str
+) -> None:
+    db_path = tmp_path / "esport.db"
+    connect(db_path).close()
+    settings = Settings(
+        _env_file=None, sqlite_path=db_path, log_level=log_level, log_file=tmp_path / "x.log"
+    )
+    monkeypatch.setattr(cli, "get_settings", lambda: settings)
+    monkeypatch.setattr(cli, "tools_repl", lambda _conn, _settings: None)
+    calls: list[tuple[str, Path | None]] = []
+    monkeypatch.setattr(cli, "setup_logging", lambda level, file: calls.append((level, file)))
+
+    cli.main(["--tools"])
+
+    assert calls == [(expected, tmp_path / "x.log")]

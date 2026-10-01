@@ -129,6 +129,8 @@ Settings are read from environment variables or `.env` (see `.env.example`).
 | `PREFERRED_LEAGUES` | `["lec"]` | Leagues used to pick a team from a short name. |
 | `TIMEZONE` | `Europe/Paris` | Time zone of match times and of today's date. |
 | `SQLITE_PATH` | `esport_agent.db` | Local database file. |
+| `LOG_LEVEL` | `INFO` (sync), `WARNING` (CLI) | `DEBUG` also shows every HTTP request; `INFO` in the CLI shows the tool calls and their cost. |
+| `LOG_FILE` | | Also write logs to this file, rotated at 5 MB (3 old files kept). |
 
 ## Development
 
@@ -148,7 +150,6 @@ pull requests with a green CI, and dependencies are kept up to date by Dependabo
   directly, and an `/ask` command for free-text questions with per-user quotas.
 - **Leaguepedia**: player nationalities, coaches, substitutes, LFL Division 2 and the full
   match history.
-- Configurable logging.
 
 ## Disclaimer
 

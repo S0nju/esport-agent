@@ -17,6 +17,8 @@ def test_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
         "LOLESPORTS_LEAGUES",
         "TIMEZONE",
         "PREFERRED_LEAGUES",
+        "LOG_LEVEL",
+        "LOG_FILE",
     ):
         monkeypatch.delenv(var, raising=False)
 
@@ -32,6 +34,8 @@ def test_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.lolesports_leagues == ["lec", "lfl", "worlds", "msi", "first_stand"]
     assert settings.tzinfo.key == "Europe/Paris"
     assert settings.preferred_leagues == ["lec"]
+    assert settings.log_level is None
+    assert settings.log_file is None
 
 
 def test_env_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -75,3 +79,13 @@ def test_timezone_override() -> None:
 def test_unknown_timezone_is_rejected() -> None:
     with pytest.raises(ValueError, match="Mars/Olympus"):
         Settings(_env_file=None, timezone="Mars/Olympus")
+
+
+@pytest.mark.parametrize(("value", "expected"), [("debug", "DEBUG"), (" Info ", "INFO")])
+def test_log_level_is_normalized(value: str, expected: str) -> None:
+    assert Settings(_env_file=None, log_level=value).log_level == expected
+
+
+def test_unknown_log_level_is_rejected() -> None:
+    with pytest.raises(ValueError, match="VERBOSE"):
+        Settings(_env_file=None, log_level="VERBOSE")
