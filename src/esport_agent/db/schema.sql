@@ -1,4 +1,5 @@
 -- Local database schema, filled by sync.py and read by the tools.
+-- This is version 0: later changes are migrations in migrations.py.
 -- Every statement must be idempotent (CREATE ... IF NOT EXISTS).
 -- Datetimes are stored as ISO 8601 UTC strings, so they sort and compare as text.
 

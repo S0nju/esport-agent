@@ -1,7 +1,7 @@
 import json
 import logging
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +10,8 @@ import pytest
 
 from esport_agent import sync
 from esport_agent.config import Settings
+from esport_agent.data import leaguepedia
+from esport_agent.data.leaguepedia import LeaguepediaError, LeaguepediaPlayer, LeaguepediaTeam
 from esport_agent.data.lolesports import Event, LolesportsClient, Team
 from esport_agent.sync import run_sync, to_match_record, to_team_records
 
@@ -236,3 +238,85 @@ def test_main_logs_at_info_by_default(monkeypatch: pytest.MonkeyPatch, tmp_path:
         sync.main()
 
     assert calls == [("INFO", None)]
+
+
+class FakeRosters:
+    """Leaguepedia stand-in: gives Karmine Corp a one-player roster and a coach."""
+
+    def __init__(self, fail: bool = False) -> None:
+        self.fail = fail
+        self.asked: list[str] = []
+
+    def fetch_players(self, teams: Iterable[str]) -> list[LeaguepediaPlayer]:
+        if self.fail:
+            raise LeaguepediaError("Still rate limited after several retries")
+        self.asked.extend(teams)
+        rows = [("Caliste", "Bot"), ("Reapered", "Coach")]
+        return [
+            LeaguepediaPlayer.model_validate(
+                {
+                    "ID": player_id,
+                    "Name": f"{player_id} Real",
+                    "Team": "Karmine Corp",
+                    "Role": role,
+                    "Country": "France",
+                    "IsSubstitute": "0",
+                }
+            )
+            for player_id, role in rows
+            if "Karmine Corp" in self.asked
+        ]
+
+    def fetch_teams_by_short(self, codes: Iterable[str]) -> list[LeaguepediaTeam]:
+        return []
+
+
+def test_run_sync_enriches_rosters_of_teams_with_matches(conn: sqlite3.Connection) -> None:
+    rosters = FakeRosters()
+
+    run_sync(conn, make_client(), ["lec"], rosters)
+
+    assert "Karmine Corp" in rosters.asked
+    assert "TBD" not in rosters.asked
+    players = conn.execute(
+        "SELECT p.summoner_name, p.country FROM players p JOIN teams t ON t.id = p.team_id"
+        " WHERE t.name = 'Karmine Corp'"
+    ).fetchall()
+    assert [tuple(row) for row in players] == [("Caliste", "France")]
+    staff = conn.execute("SELECT name, role FROM staff").fetchall()
+    assert [tuple(row) for row in staff] == [("Reapered", "Coach")]
+
+
+def test_run_sync_keeps_lolesports_rosters_when_leaguepedia_fails(
+    conn: sqlite3.Connection, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.ERROR):
+        stats = run_sync(conn, make_client(), ["lec"], FakeRosters(fail=True))
+
+    assert stats.teams == 4
+    kc_players = conn.execute(
+        "SELECT count(*) FROM players p JOIN teams t ON t.id = p.team_id"
+        " WHERE t.name = 'Karmine Corp'"
+    ).fetchone()[0]
+    assert kc_players == 5
+    assert "keeping the lolesports rosters" in caplog.text
+
+
+def test_make_roster_source_needs_credentials(settings: Settings) -> None:
+    assert sync.make_roster_source(settings) is None
+
+
+def test_make_roster_source_survives_a_failed_login(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    def failing_login(_settings: Settings) -> object:
+        raise ConnectionError("wiki down")
+
+    monkeypatch.setattr(leaguepedia, "make_client", failing_login)
+    settings = Settings(
+        _env_file=None, leaguepedia_bot_username="Me@bot", leaguepedia_bot_password="secret"
+    )
+
+    with caplog.at_level(logging.ERROR):
+        assert sync.make_roster_source(settings) is None
+    assert "Leaguepedia login failed" in caplog.text

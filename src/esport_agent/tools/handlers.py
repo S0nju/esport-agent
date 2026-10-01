@@ -90,10 +90,19 @@ class TeamInfo(TypedDict):
 
 class PlayerInfo(TypedDict):
     summoner_name: str
-    first_name: str
-    last_name: str
+    real_name: str
     role: str
     """Top, Jungle, Mid, Bot or Support."""
+    country: str | None
+    substitute: bool
+
+
+class StaffInfo(TypedDict):
+    name: str
+    real_name: str
+    role: str
+    """Coach, Analyst, Manager, Owner... as given by the source."""
+    country: str | None
 
 
 class MatchInfo(TypedDict):
@@ -124,8 +133,11 @@ class ToolError(TypedDict):
 class RosterResponse(TypedDict):
     team: TeamInfo
     players: list[PlayerInfo]
+    """Starters first, then substitutes, each by role."""
+    staff: list[StaffInfo]
+    """Empty when the source gives no staff (teams without a Leaguepedia roster)."""
     note: NotRequired[str]
-    """Only present when a role has several players."""
+    """Only present when a role has several players that are not marked as substitutes."""
 
 
 class NextMatchResponse(TypedDict):
@@ -144,11 +156,12 @@ def get_team_roster(
     preferred_leagues: Sequence[str] = (),
     league: str | None = None,
 ) -> RosterResponse | ToolError:
-    """Return the current roster of `team`, main roles first, without role-less members.
+    """Return the current players and staff of `team`, without role-less members.
 
-    `league` picks the team of the organization playing there ("KC" + "LFL"). The source
-    does not tell starters from substitutes or inactive players: when a role has several
-    players, a `note` says so.
+    `league` picks the team of the organization playing there ("KC" + "LFL"). Players
+    come with their country and a substitute flag when Leaguepedia knows the team; for
+    the others (lolesports only), starters, substitutes and inactive players are mixed,
+    so a `note` warns when a role has several players.
     """
     found = _resolve(conn, team, league, preferred_leagues)
     if isinstance(found, dict):
@@ -156,22 +169,27 @@ def get_team_roster(
     resolved, _ = found
     players = sorted(
         (p for p in resolved.players if p.role in ROLE_LABELS),
-        key=lambda p: (_role_rank(p.role), p.summoner_name),
+        key=lambda p: (p.is_substitute, _role_rank(p.role), p.summoner_name),
     )
     response: RosterResponse = {
         "team": _team_info(conn, resolved),
         "players": [
             {
                 "summoner_name": p.summoner_name,
-                "first_name": p.first_name,
-                "last_name": p.last_name,
+                "real_name": f"{p.first_name} {p.last_name}".strip(),
                 "role": ROLE_LABELS[p.role],
+                "country": p.country,
+                "substitute": p.is_substitute,
             }
             for p in players
         ],
+        "staff": [
+            {"name": s.name, "real_name": s.real_name, "role": s.role, "country": s.country}
+            for s in resolved.staff
+        ],
     }
-    roles = [p.role for p in players]
-    if len(roles) != len(set(roles)):
+    starter_roles = [p.role for p in players if not p.is_substitute]
+    if len(starter_roles) != len(set(starter_roles)):
         response["note"] = INACTIVE_PLAYERS_NOTE
     return response
 

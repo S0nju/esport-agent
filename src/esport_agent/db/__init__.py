@@ -1,7 +1,7 @@
 """Schema and access to the local SQLite database."""
 
 from esport_agent.db.connection import connect, init_schema
-from esport_agent.db.records import MatchRecord, MatchSide, PlayerRecord, TeamRecord
+from esport_agent.db.records import MatchRecord, MatchSide, PlayerRecord, StaffRecord, TeamRecord
 from esport_agent.db.repository import (
     delete_stale_matches,
     find_leagues,
@@ -19,6 +19,7 @@ __all__ = [
     "MatchRecord",
     "MatchSide",
     "PlayerRecord",
+    "StaffRecord",
     "TeamRecord",
     "connect",
     "delete_stale_matches",

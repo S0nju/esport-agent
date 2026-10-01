@@ -76,6 +76,24 @@ class LeaguepediaPlayer(_Model):
         return value == "1"
 
 
+class LeaguepediaTeam(_Model):
+    """A row of the `Teams` table."""
+
+    name: str = Field(alias="Name")
+    short: str = Field(alias="Short")
+    is_disbanded: bool = Field(alias="IsDisbanded")
+
+    @field_validator("short", mode="before")
+    @classmethod
+    def _empty_short(cls, value: object) -> object:
+        return value or ""
+
+    @field_validator("is_disbanded", mode="before")
+    @classmethod
+    def _cargo_boolean(cls, value: object) -> bool:
+        return value == "1"
+
+
 class LeaguepediaClient:
     """Paced, paginated and validated access to Cargo tables."""
 
@@ -128,6 +146,21 @@ class LeaguepediaClient:
             )
             players.extend(_validate(LeaguepediaPlayer, row, "Players") for row in rows)
         return players
+
+    def fetch_teams_by_short(self, codes: Iterable[str]) -> list[LeaguepediaTeam]:
+        """Return the teams whose short name is one of `codes`, disbanded ones included."""
+        unique = sorted(set(codes))
+        teams: list[LeaguepediaTeam] = []
+        for start in range(0, len(unique), TEAMS_PER_QUERY):
+            chunk = unique[start : start + TEAMS_PER_QUERY]
+            rows = self.query(
+                "Teams",
+                ["Name", "Short", "IsDisbanded"],
+                where=f"Short IN ({', '.join(cargo_quote(code) for code in chunk)})",
+                order_by="Name",
+            )
+            teams.extend(_validate(LeaguepediaTeam, row, "Teams") for row in rows)
+        return teams
 
     def _request(self, params: Mapping[str, str | int]) -> _CargoResponse:
         for attempt in range(MAX_RATE_LIMIT_RETRIES + 1):

@@ -4,7 +4,13 @@ import sqlite3
 from collections.abc import Collection, Iterable
 from datetime import UTC, datetime
 
-from esport_agent.db.records import MatchRecord, MatchSide, PlayerRecord, TeamRecord
+from esport_agent.db.records import (
+    MatchRecord,
+    MatchSide,
+    PlayerRecord,
+    StaffRecord,
+    TeamRecord,
+)
 
 
 def replace_teams(conn: sqlite3.Connection, teams: Iterable[TeamRecord]) -> None:
@@ -13,21 +19,43 @@ def replace_teams(conn: sqlite3.Connection, teams: Iterable[TeamRecord]) -> None
     Rosters change over time (transfers, retirements), so the previous snapshot is dropped
     rather than merged. The caller owns the transaction.
     """
+    conn.execute("DELETE FROM staff")
     conn.execute("DELETE FROM players")
     conn.execute("DELETE FROM teams")
     for team in teams:
         conn.execute(
-            "INSERT INTO teams (id, slug, name, code, status, home_league)"
-            " VALUES (?, ?, ?, ?, ?, ?)",
-            (team.id, team.slug, team.name, team.code, team.status, team.home_league),
+            "INSERT INTO teams (id, slug, name, code, status, home_league, leaguepedia_name)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                team.id,
+                team.slug,
+                team.name,
+                team.code,
+                team.status,
+                team.home_league,
+                team.leaguepedia_name,
+            ),
         )
         conn.executemany(
-            "INSERT INTO players (team_id, id, summoner_name, first_name, last_name, role)"
-            " VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO players (team_id, id, summoner_name, first_name, last_name, role,"
+            " country, is_substitute) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             [
-                (team.id, p.id, p.summoner_name, p.first_name, p.last_name, p.role)
+                (
+                    team.id,
+                    p.id,
+                    p.summoner_name,
+                    p.first_name,
+                    p.last_name,
+                    p.role,
+                    p.country,
+                    p.is_substitute,
+                )
                 for p in team.players
             ],
+        )
+        conn.executemany(
+            "INSERT INTO staff (team_id, name, real_name, role, country) VALUES (?, ?, ?, ?, ?)",
+            [(team.id, s.name, s.real_name, s.role, s.country) for s in team.staff],
         )
 
 
@@ -274,6 +302,10 @@ def _team_from_row(conn: sqlite3.Connection, row: sqlite3.Row) -> TeamRecord:
         "SELECT * FROM players WHERE team_id = ? ORDER BY summoner_name COLLATE NOCASE",
         (row["id"],),
     ).fetchall()
+    staff = conn.execute(
+        "SELECT * FROM staff WHERE team_id = ? ORDER BY role, name COLLATE NOCASE",
+        (row["id"],),
+    ).fetchall()
     return TeamRecord(
         id=row["id"],
         slug=row["slug"],
@@ -288,9 +320,18 @@ def _team_from_row(conn: sqlite3.Connection, row: sqlite3.Row) -> TeamRecord:
                 first_name=p["first_name"],
                 last_name=p["last_name"],
                 role=p["role"],
+                country=p["country"],
+                is_substitute=bool(p["is_substitute"]),
             )
             for p in players
         ),
+        staff=tuple(
+            StaffRecord(
+                name=s["name"], real_name=s["real_name"], role=s["role"], country=s["country"]
+            )
+            for s in staff
+        ),
+        leaguepedia_name=row["leaguepedia_name"],
     )
 
 

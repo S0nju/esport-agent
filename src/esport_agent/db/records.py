@@ -10,7 +10,20 @@ class PlayerRecord:
     summoner_name: str
     first_name: str
     last_name: str
+    """Empty when the source only gives a full name (Leaguepedia), kept in `first_name`."""
     role: str
+    """top, jungle, mid, bottom, support or none."""
+    country: str | None = None
+    is_substitute: bool = False
+
+
+@dataclass(frozen=True)
+class StaffRecord:
+    name: str
+    real_name: str
+    role: str
+    """Coach, Analyst, Manager, Owner... as given by the source."""
+    country: str | None = None
 
 
 @dataclass(frozen=True)
@@ -22,6 +35,9 @@ class TeamRecord:
     status: str
     home_league: str | None
     players: tuple[PlayerRecord, ...]
+    staff: tuple[StaffRecord, ...] = ()
+    leaguepedia_name: str | None = None
+    """Name of the team on Leaguepedia, when its roster comes from there."""
 
 
 @dataclass(frozen=True)
