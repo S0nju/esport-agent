@@ -6,8 +6,9 @@
 
 A conversational agent that answers natural-language questions about League of Legends
 esports: a team's roster, its next match, its latest results. It is built on Claude with
-tool calling over a local database kept up to date from the lolesports API, and is meant to
-run as a Discord bot. Today it runs as a command-line app.
+tool calling over a local database kept up to date from the lolesports API. The agent runs
+as a command-line app, and a Discord bot already answers the common questions (roster, next
+match, results) without calling the model.
 
 ## Example
 
@@ -54,6 +55,9 @@ printed after each answer.
   instead of guessed.
 - **Cost-aware**: each answer shows the model used, the tokens and an estimated cost (about
   $0.005 per question with Claude Haiku 4.5).
+- **Discord bot**: `/roster`, `/next` and `/results` answer from the database without
+  calling the model, so they are free and instant, in the user's Discord language (French or
+  English), with dates shown in each user's own time zone.
 
 ## Architecture
 
@@ -76,6 +80,7 @@ printed after each answer.
 | `agent.py` | The tool-use loop: calls Claude, runs the requested tools, returns the answer with its usage. |
 | `prompts/system.md` | The system prompt, versioned separately from the code. |
 | `cli.py` | Interactive command line, with a `--tools` mode that calls the tools without Claude. |
+| `bot/` | Discord bot: slash commands that call the tools and format their results in the user's language, restricted to an allowlist of servers. |
 
 ## Design choices
 
@@ -116,6 +121,10 @@ printed after each answer.
 - **Controlled costs.** Claude Haiku 4.5 by default, usage and cost reported per answer, and
   for the Discord bot, slash commands that answer common questions without calling the model
   at all.
+- **A locked-down bot.** It only needs the `guilds` intent (no access to messages), its
+  commands are registered on an allowlist of servers and it leaves any other server, it
+  never pings anyone, and it escapes the Markdown of the names it quotes. Dates are Discord
+  timestamps, which each client shows in its own language and time zone.
 
 ## Getting started
 
@@ -130,10 +139,17 @@ cp .env.example .env          # then set ANTHROPIC_API_KEY
 uv run python -m esport_agent.sync           # fill the local database
 uv run python -m esport_agent.cli            # ask the agent questions
 uv run python -m esport_agent.cli --tools    # call the tools directly, without Claude
+uv run python -m esport_agent.bot            # run the Discord bot
 ```
 
 In `--tools` mode, type `help` for the list of tools, then for example
 `get_team_recent_results team="Karmine Corp" limit=3`.
+
+For the Discord bot, create an application on the
+[Discord Developer Portal](https://discord.com/developers/applications), put its bot token
+in `DISCORD_BOT_TOKEN` and the IDs of the allowed servers in `DISCORD_GUILD_IDS`, then
+invite it with the `bot` and `applications.commands` scopes (permissions: Send Messages,
+Embed Links). No privileged intent is needed.
 
 ### Configuration
 
@@ -151,8 +167,10 @@ Settings are read from environment variables or `.env` (see `.env.example`).
 | `LEAGUEPEDIA_BOT_USERNAME`, `LEAGUEPEDIA_BOT_PASSWORD` | | Leaguepedia bot password (`Special:BotPasswords`). Without it, rosters come from lolesports only. |
 | `LEAGUEPEDIA_TEAM_ALIASES` | `{}` | lolesports team name to Leaguepedia page, for teams no rule can match (the sync logs list them), e.g. `{"Team Liquid Alienware": "Team Liquid"}`. |
 | `SQLITE_PATH` | `esport_agent.db` | Local database file. |
-| `LOG_LEVEL` | `INFO` (sync), `WARNING` (CLI) | `DEBUG` also shows every HTTP request; `INFO` in the CLI shows the tool calls and their cost. |
+| `LOG_LEVEL` | `INFO` (sync, bot), `WARNING` (CLI) | `DEBUG` also shows every HTTP request; `INFO` in the CLI shows the tool calls and their cost. |
 | `LOG_FILE` | | Also write logs to this file, rotated at 5 MB (3 old files kept). |
+| `DISCORD_BOT_TOKEN` | | Required by the Discord bot. |
+| `DISCORD_GUILD_IDS` | `[]` | Servers allowed to use the bot, as a JSON list of IDs. Required by the bot. |
 
 ## Development
 
@@ -168,8 +186,8 @@ pull requests with a green CI, and dependencies are kept up to date by Dependabo
 
 ## Roadmap
 
-- **Discord bot**: free slash commands (`/roster`, `/next`, `/results`) that call the tools
-  directly, and an `/ask` command for free-text questions with per-user quotas.
+- **Discord bot, part 2**: an `/ask` command for free-text questions through the agent,
+  with per-user quotas, a global daily cap and a request history.
 - **Leaguepedia, part 2**: the French second division (Nexus League) and the full match
   history, beyond what lolesports keeps (2024 onwards).
 
