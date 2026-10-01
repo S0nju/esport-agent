@@ -87,9 +87,10 @@ printed after each answer.
   availability or rate limits of the sources, and every source goes through the same
   schema, which is independent of where the data comes from.
 - **Defensive handling of an unofficial API.** Responses are validated against pydantic
-  models, a failed call leaves the database untouched, duplicated entries are skipped, and
-  upcoming matches that disappear from the schedule (cancelled or moved) are removed while
-  past results are kept.
+  models, duplicated entries are skipped, and upcoming matches that disappear from the
+  schedule (cancelled or moved) are removed while past results are kept. A failed call
+  leaves the database untouched: the sync exits with a one-line error and a non-zero code,
+  for a scheduler to notice (`LOG_LEVEL=DEBUG` shows the full details).
 - **Team name resolution in the tools, not in the prompt.** Exact name, code or slug first,
   ranked to prefer active teams in a league; then partial names, settled by the preferred
   leagues; and an explicit list of candidates when it stays ambiguous, so the model asks

@@ -19,7 +19,7 @@ from esport_agent.data.leaguepedia import (
     LeaguepediaTeam,
     LeaguepediaTournamentPlayer,
 )
-from esport_agent.data.lolesports import Event, LolesportsClient, Team
+from esport_agent.data.lolesports import Event, LolesportsClient, LolesportsFormatError, Team
 from esport_agent.sync import run_sync, to_match_record, to_team_records
 
 FIXTURES = Path(__file__).parent / "fixtures" / "lolesports"
@@ -305,7 +305,7 @@ def test_run_sync_enriches_rosters_of_teams_with_matches(conn: sqlite3.Connectio
 def test_run_sync_keeps_lolesports_rosters_when_leaguepedia_fails(
     conn: sqlite3.Connection, caplog: pytest.LogCaptureFixture
 ) -> None:
-    with caplog.at_level(logging.ERROR):
+    with caplog.at_level(logging.INFO):
         stats = run_sync(conn, make_client(), ["lec"], FakeRosters(fail=True))
 
     assert stats.teams == 4
@@ -314,7 +314,8 @@ def test_run_sync_keeps_lolesports_rosters_when_leaguepedia_fails(
         " WHERE t.name = 'Karmine Corp'"
     ).fetchone()[0]
     assert kc_players == 5
-    assert "keeping the lolesports rosters" in caplog.text
+    assert "unavailable (LeaguepediaError: Still rate limited" in caplog.text
+    assert "Traceback" not in caplog.text
 
 
 def test_make_roster_source_needs_credentials(settings: Settings) -> None:
@@ -325,16 +326,20 @@ def test_make_roster_source_survives_a_failed_login(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     def failing_login(_settings: Settings) -> object:
-        raise ConnectionError("wiki down")
+        try:
+            raise OSError("[Errno -2] Name or service not known")
+        except OSError as exc:
+            raise ConnectionError("HTTPSConnectionPool(host='lol.fandom.com')") from exc
 
     monkeypatch.setattr(leaguepedia, "make_client", failing_login)
     settings = Settings(
         _env_file=None, leaguepedia_bot_username="Me@bot", leaguepedia_bot_password="secret"
     )
 
-    with caplog.at_level(logging.ERROR):
+    with caplog.at_level(logging.INFO):
         assert sync.make_roster_source(settings) is None
-    assert "Leaguepedia login failed" in caplog.text
+    assert "login failed (OSError: [Errno -2] Name or service not known)" in caplog.text
+    assert "Traceback" not in caplog.text
 
 
 def test_run_sync_passes_the_aliases(conn: sqlite3.Connection) -> None:
@@ -348,3 +353,60 @@ def test_run_sync_passes_the_aliases(conn: sqlite3.Connection) -> None:
     run_sync(conn, make_client(), ["lec"], rosters, {"Karmine Corp": "KC Wiki Page"})
 
     assert "KC Wiki Page" in rosters.asked
+
+
+def test_unexpected_enrichment_bugs_keep_their_traceback(
+    conn: sqlite3.Connection, caplog: pytest.LogCaptureFixture
+) -> None:
+    class BuggyWiki(FakeRosters):
+        def fetch_players(self, teams: Iterable[str]) -> list[LeaguepediaPlayer]:
+            raise KeyError("oops")
+
+    with caplog.at_level(logging.INFO):
+        stats = run_sync(conn, make_client(), ["lec"], BuggyWiki())
+
+    assert stats.teams == 4
+    assert "Traceback" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        httpx.ConnectError("[Errno -2] Name or service not known"),
+        LolesportsFormatError("Unexpected getLeagues payload"),
+    ],
+)
+def test_main_exits_cleanly_when_lolesports_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    error: Exception,
+) -> None:
+    settings = Settings(_env_file=None, lolesports_api_key="key", sqlite_path=tmp_path / "db")
+    monkeypatch.setattr(sync, "get_settings", lambda: settings)
+    monkeypatch.setattr(sync, "setup_logging", lambda level, file: None)
+    monkeypatch.setattr(sync, "make_roster_source", lambda settings: None)
+
+    def failing_sync(*args: object) -> None:
+        raise error
+
+    monkeypatch.setattr(sync, "run_sync", failing_sync)
+
+    with caplog.at_level(logging.INFO), pytest.raises(SystemExit) as exit_info:
+        sync.main()
+
+    assert exit_info.value.code == 1
+    assert "sync aborted, the database is unchanged" in caplog.text
+    assert type(error).__name__ in caplog.text
+    assert "Traceback" not in caplog.text
+
+
+def test_reason_finds_the_root_cause() -> None:
+    try:
+        try:
+            raise OSError("[Errno -2] Name or service not known\nmore details")
+        except OSError as exc:
+            raise ConnectionError("pool") from exc
+    except ConnectionError as wrapper:
+        assert sync._reason(wrapper) == "OSError: [Errno -2] Name or service not known"
+    assert sync._reason(RuntimeError()) == "RuntimeError"

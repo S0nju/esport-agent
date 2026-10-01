@@ -153,11 +153,12 @@ def test_rate_limit_gives_up_after_several_retries() -> None:
 
 
 def test_other_api_errors_are_not_retried() -> None:
-    api = FakeApi(RuntimeError("bad request"))
+    api = FakeApi(ConnectionError("Name or service not known"))
     client, _ = make_client(api)
 
-    with pytest.raises(RuntimeError, match="bad request"):
+    with pytest.raises(LeaguepediaError, match="request failed") as error:
         client.query("Teams", ["Name"])
+    assert isinstance(error.value.__cause__, ConnectionError)
     assert len(api.calls) == 1
 
 
