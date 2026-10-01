@@ -43,8 +43,8 @@ python_version = "3.14"
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-# mwrogue ships no type annotations.
-module = ["mwrogue", "mwrogue.*"]
+# mwrogue and mwcleric (its login helpers) ship no type annotations.
+module = ["mwrogue", "mwrogue.*", "mwcleric", "mwcleric.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
