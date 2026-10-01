@@ -37,9 +37,9 @@ printed after each answer.
 
 ## Features
 
-- **Three questions**: current roster, next match (or the match being played), latest
-  results with scores from the team's point of view. Rosters leave out members without a
-  role and say when the source lists several players for a role.
+- **Three questions**: current roster and staff (players with their country, substitutes,
+  coaches, analysts, managers), next match (or the match being played), latest results with
+  scores from the team's point of view.
 - **Flexible team names**: full name, short name or code ("Karmine Corp", "KC"). A short
   name shared by several teams resolves to the one playing in the preferred leagues
   ("Vitality" is Team Vitality, not Vitality.Bee); if that does not settle it, the agent
@@ -49,26 +49,28 @@ printed after each answer.
   Worlds matches).
 - **Multilingual**: answers in the language of the question, with match times in the
   configured time zone and relative dates ("tonight", "in 3 days").
-- **Grounded**: every fact comes from the database; missing data (coaches, nationalities)
-  is reported as missing instead of guessed.
+- **Grounded**: every fact comes from the database; missing data is reported as missing
+  instead of guessed.
 - **Cost-aware**: each answer shows the model used, the tokens and an estimated cost (about
   $0.005 per question with Claude Haiku 4.5).
 
 ## Architecture
 
 ```text
- lolesports API ──► data/lolesports.py ──► sync.py ──► SQLite ◄── tools/ ◄──► Claude
- (unofficial)       typed client,          one                    roster,     (agent.py)
-                    validated responses    transaction            next match,     │
-                                                                  results         ▼
+ lolesports API ──► data/lolesports.py ──┐
+ (teams, schedules)                      ├──► sync.py ──► SQLite ◄── tools/ ◄──► Claude
+ Leaguepedia ─────► data/leaguepedia.py ─┘    rosters.py  (one        roster,    (agent.py)
+ (rosters, staff)   paced client              matching    transaction) next match,   │
+                                                                       results       ▼
                                                                           CLI / Discord bot
 ```
 
 | Module | Role |
 |---|---|
-| `data/` | The only place where HTTP calls are made. `lolesports.py` is a typed client whose responses are validated with pydantic, so a change in the unofficial API fails loudly. |
-| `sync.py` | Fetches every team with its roster and the schedule of the configured leagues, then writes everything in a single transaction. |
-| `db/` | SQLite schema, source-agnostic records and queries (team search, next match, results). |
+| `data/` | The only place where HTTP calls are made. `lolesports.py` is a typed client whose responses are validated with pydantic, so a change in the unofficial API fails loudly. `leaguepedia.py` queries the wiki's Cargo tables at its strict rate (one request every 15 s, retries when refused, its own pagination). |
+| `sync.py` | Fetches every team and the schedule of the configured leagues from lolesports, enriches the rosters from Leaguepedia, then writes everything in a single transaction. |
+| `rosters.py` | Matches lolesports teams to Leaguepedia teams and merges their rosters, staff and countries. |
+| `db/` | SQLite schema with versioned migrations, source-agnostic records and queries (team search, next match, results). |
 | `tools/` | Tool schemas for Claude and the functions behind them: team name resolution, JSON answers, local times. They only read the database. |
 | `agent.py` | The tool-use loop: calls Claude, runs the requested tools, returns the answer with its usage. |
 | `prompts/system.md` | The system prompt, versioned separately from the code. |
@@ -91,6 +93,13 @@ printed after each answer.
   ranked to prefer active teams in a league; then partial names, settled by the preferred
   leagues; and an explicit list of candidates when it stays ambiguous, so the model asks
   instead of guessing.
+- **Two sources, one reference per kind of data.** lolesports is fast and unlimited but
+  mixes starters, substitutes and inactive players; Leaguepedia has accurate rosters and
+  staff but allows about 5 requests per minute. Schedules and results come from lolesports,
+  rosters and staff from Leaguepedia. Teams are matched by name (ignoring case and
+  accents), then by short code only when a single active team uses it: an ambiguous team is
+  left unmatched and keeps its lolesports roster, since a wrong match would show another
+  team's players. If Leaguepedia is unavailable, the sync still completes.
 - **Nothing team-specific in the code.** The default team, preferred leagues, synced leagues
   and time zone are settings: Karmine Corp is only the default value.
 - **Controlled costs.** Claude Haiku 4.5 by default, usage and cost reported per answer, and
@@ -128,6 +137,7 @@ Settings are read from environment variables or `.env` (see `.env.example`).
 | `LOLESPORTS_LEAGUES` | `["lec", "lfl", "worlds", "msi", "first_stand"]` | Leagues whose schedule is synced. |
 | `PREFERRED_LEAGUES` | `["lec"]` | Leagues used to pick a team from a short name. |
 | `TIMEZONE` | `Europe/Paris` | Time zone of match times and of today's date. |
+| `LEAGUEPEDIA_BOT_USERNAME`, `LEAGUEPEDIA_BOT_PASSWORD` | | Leaguepedia bot password (`Special:BotPasswords`). Without it, rosters come from lolesports only. |
 | `SQLITE_PATH` | `esport_agent.db` | Local database file. |
 | `LOG_LEVEL` | `INFO` (sync), `WARNING` (CLI) | `DEBUG` also shows every HTTP request; `INFO` in the CLI shows the tool calls and their cost. |
 | `LOG_FILE` | | Also write logs to this file, rotated at 5 MB (3 old files kept). |
@@ -148,8 +158,8 @@ pull requests with a green CI, and dependencies are kept up to date by Dependabo
 
 - **Discord bot**: free slash commands (`/roster`, `/next`, `/results`) that call the tools
   directly, and an `/ask` command for free-text questions with per-user quotas.
-- **Leaguepedia**: player nationalities, coaches, substitutes, LFL Division 2 and the full
-  match history.
+- **Leaguepedia, part 2**: the French second division (Nexus League) and the full match
+  history, beyond what lolesports keeps (2024 onwards).
 
 ## Disclaimer
 
