@@ -240,3 +240,21 @@ def test_make_client_logs_in_with_the_bot_password(monkeypatch: pytest.MonkeyPat
     credentials = created["credentials"]
     assert getattr(credentials, "username", None) == "Me@esport-agent"
     assert client.query("Teams", ["Name"]) == []
+
+
+def test_fetch_teams_by_short() -> None:
+    api = FakeApi(
+        page(
+            {"Name": "Gen.G", "Short": "GEN", "IsDisbanded": "0"},
+            {"Name": "Old Team", "Short": None, "IsDisbanded": "1"},
+        )
+    )
+    client, _ = make_client(api)
+
+    teams = client.fetch_teams_by_short(["GEN", "GEN", "JDG"])
+
+    assert [(t.name, t.short, t.is_disbanded) for t in teams] == [
+        ("Gen.G", "GEN", False),
+        ("Old Team", "", True),
+    ]
+    assert api.calls[0]["where"] == 'Short IN ("GEN", "JDG")'

@@ -1,20 +1,22 @@
 """Update the local SQLite database from the external sources.
 
-For the MVP, every table is filled from the lolesports API: all teams with their rosters,
-and the schedule of the configured leagues.
+lolesports gives all teams with their rosters, and the schedule of the configured leagues.
+Leaguepedia, when bot credentials are configured, then replaces the rosters of the teams
+playing in those leagues with its own (starters, substitutes, staff, countries).
 
 Usage: `uv run python -m esport_agent.sync`
 """
 
 import logging
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from contextlib import closing
 from dataclasses import dataclass
 
 import httpx
 
-from esport_agent.config import MissingSettingError, get_settings, require_secret
+from esport_agent.config import MissingSettingError, Settings, get_settings, require_secret
+from esport_agent.data import leaguepedia
 from esport_agent.data.lolesports import Event, LolesportsClient, Team
 from esport_agent.db import (
     MatchRecord,
@@ -28,6 +30,7 @@ from esport_agent.db import (
     upsert_matches,
 )
 from esport_agent.logging_config import setup_logging
+from esport_agent.rosters import RosterSource, enrich_teams
 
 # Named explicitly: run with `python -m`, __name__ would be "__main__".
 logger = logging.getLogger("esport_agent.sync")
@@ -123,13 +126,18 @@ def fetch_league_matches(client: LolesportsClient, league_id: str) -> list[Match
 
 
 def run_sync(
-    conn: sqlite3.Connection, client: LolesportsClient, league_slugs: Sequence[str]
+    conn: sqlite3.Connection,
+    client: LolesportsClient,
+    league_slugs: Sequence[str],
+    rosters: RosterSource | None = None,
 ) -> SyncStats:
     """Fetch teams and the schedule of `league_slugs`, then write them in one transaction.
 
     Everything is fetched before anything is written, so a failing API call leaves the
     database untouched. Unfinished matches that a league's schedule no longer returns
-    (cancelled, moved to another league) are deleted.
+    (cancelled, moved to another league) are deleted. With `rosters` (Leaguepedia), the
+    rosters of the teams playing in these leagues are enriched; if that fails, the
+    lolesports rosters are kept.
     """
     league_ids = {league.slug: league.id for league in client.get_leagues()}
     unknown = [slug for slug in league_slugs if slug not in league_ids]
@@ -143,6 +151,8 @@ def run_sync(
             schedules[slug] = fetch_league_matches(client, league_ids[slug])
             logger.info("Fetched schedule of %s", slug)
     matches = {match.id: match for records in schedules.values() for match in records}
+    if rosters is not None:
+        teams = enrich_rosters(teams, matches.values(), rosters)
 
     deleted = 0
     with conn:
@@ -164,6 +174,45 @@ def run_sync(
     return SyncStats(teams=len(teams), matches=len(matches), deleted_matches=deleted)
 
 
+def enrich_rosters(
+    teams: list[TeamRecord], matches: Iterable[MatchRecord], rosters: RosterSource
+) -> list[TeamRecord]:
+    """Enrich the rosters of the teams playing in `matches`, or keep them on any failure."""
+    tracked: dict[str, str] = {}
+    for match in matches:
+        for side in (match.team1, match.team2):
+            if side.name != "TBD":
+                tracked[side.name] = side.code
+    try:
+        enriched, stats = enrich_teams(teams, tracked, rosters)
+    except Exception:
+        # Leaguepedia is a bonus: a failure (rate limit, network, format) must not
+        # prevent the lolesports data from being synced.
+        logger.exception("Leaguepedia rosters unavailable, keeping the lolesports rosters")
+        return teams
+    logger.info(
+        "Leaguepedia rosters: %d teams matched by name, %d by code, %d unmatched (%s)",
+        stats.by_name,
+        stats.by_code,
+        len(stats.unmatched),
+        ", ".join(stats.unmatched),
+    )
+    return enriched
+
+
+def make_roster_source(settings: Settings) -> RosterSource | None:
+    """Log in to Leaguepedia if bot credentials are configured, otherwise skip it."""
+    if not (settings.leaguepedia_bot_username and settings.leaguepedia_bot_password):
+        logger.info("No Leaguepedia credentials: rosters come from lolesports only")
+        return None
+    try:
+        return leaguepedia.make_client(settings)
+    except Exception:
+        # Same as above: a failed login only means rosters stay as lolesports gives them.
+        logger.exception("Leaguepedia login failed, rosters come from lolesports only")
+        return None
+
+
 def main() -> None:
     settings = get_settings()
     setup_logging(settings.log_level or "INFO", settings.log_file)
@@ -177,7 +226,8 @@ def main() -> None:
     ):
         init_schema(conn)
         client = LolesportsClient(http, api_key)
-        stats = run_sync(conn, client, settings.lolesports_leagues)
+        rosters = make_roster_source(settings)
+        stats = run_sync(conn, client, settings.lolesports_leagues, rosters)
     logger.info(
         "Synced %d teams and %d matches into %s", stats.teams, stats.matches, settings.sqlite_path
     )
