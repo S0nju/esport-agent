@@ -7,6 +7,7 @@ import pytest
 
 from esport_agent.db import (
     MatchSide,
+    StaffRecord,
     connect,
     delete_stale_matches,
     find_leagues,
@@ -248,3 +249,26 @@ def test_match_queries_filter_by_league(conn: sqlite3.Connection) -> None:
     assert [m.id for m in recent_results(conn, "Team A", 5)] == ["lec", "worlds"]
     worlds_next = next_match(conn, "Team A", now, {"worlds"})
     assert worlds_next is not None and worlds_next.id == "worlds-next"
+
+
+def test_teams_keep_staff_countries_and_substitutes(conn: sqlite3.Connection) -> None:
+    team = replace(
+        make_team("kc", name="Karmine Corp", code="KC"),
+        players=(
+            replace(make_player("Caliste", "bottom"), country="France"),
+            replace(make_player("Sub", "mid"), is_substitute=True),
+        ),
+        staff=(StaffRecord(name="Reapered", real_name="Bok Han-gyu", role="Coach"),),
+        leaguepedia_name="Karmine Corp",
+    )
+
+    replace_teams(conn, [team])
+    replace_teams(conn, [team])  # Staff is replaced too, not duplicated.
+    found, _ = find_teams(conn, "KC")
+
+    assert found[0].leaguepedia_name == "Karmine Corp"
+    assert {(p.summoner_name, p.country, p.is_substitute) for p in found[0].players} == {
+        ("Caliste", "France", False),
+        ("Sub", None, True),
+    }
+    assert found[0].staff == (StaffRecord("Reapered", "Bok Han-gyu", "Coach", None),)
