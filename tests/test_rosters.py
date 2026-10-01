@@ -1,11 +1,18 @@
 from collections.abc import Iterable
+from datetime import date
 
 import pytest
 
-from esport_agent.data.leaguepedia import LeaguepediaPlayer, LeaguepediaTeam
+from esport_agent.data.leaguepedia import (
+    LeaguepediaPlayer,
+    LeaguepediaTeam,
+    LeaguepediaTournamentPlayer,
+)
 from esport_agent.db import TeamRecord
 from esport_agent.rosters import enrich_teams, normalize
 from tests.factories import make_player, make_team
+
+TODAY = date(2026, 10, 1)
 
 
 def wiki_player(
@@ -23,21 +30,49 @@ def wiki_player(
     )
 
 
-def wiki_team(name: str, short: str, *, disbanded: bool = False) -> LeaguepediaTeam:
+def wiki_team(
+    name: str, short: str, *, page: str | None = None, disbanded: bool = False
+) -> LeaguepediaTeam:
     return LeaguepediaTeam.model_validate(
-        {"Name": name, "Short": short, "IsDisbanded": "1" if disbanded else "0"}
+        {
+            "Page": page or name,
+            "Name": name,
+            "Short": short,
+            "IsDisbanded": "1" if disbanded else "0",
+        }
+    )
+
+
+def registration(
+    player: str, team: str, role: str, tournament: str, start: str, end: str = ""
+) -> LeaguepediaTournamentPlayer:
+    return LeaguepediaTournamentPlayer.model_validate(
+        {
+            "Team": team,
+            "Player": player,
+            "Role": role,
+            "Country": "Turkey",
+            "Tournament": tournament,
+            "DateStart": start,
+            "DateEnd": end,
+        }
     )
 
 
 class FakeWiki:
-    """In-memory Leaguepedia: players by wiki team name, and the Teams table."""
+    """In-memory Leaguepedia: current players, the Teams table and tournament rosters."""
 
     def __init__(
-        self, players: Iterable[LeaguepediaPlayer], teams: Iterable[LeaguepediaTeam] = ()
+        self,
+        players: Iterable[LeaguepediaPlayer] = (),
+        teams: Iterable[LeaguepediaTeam] = (),
+        registrations: Iterable[LeaguepediaTournamentPlayer] = (),
     ) -> None:
         self.players = list(players)
         self.teams = list(teams)
+        self.registrations = list(registrations)
         self.player_queries: list[list[str]] = []
+        self.since: date | None = None
 
     def fetch_players(self, teams: Iterable[str]) -> list[LeaguepediaPlayer]:
         wanted = list(teams)
@@ -49,6 +84,17 @@ class FakeWiki:
     def fetch_teams_by_short(self, codes: Iterable[str]) -> list[LeaguepediaTeam]:
         keys = {normalize(code) for code in codes}
         return [t for t in self.teams if normalize(t.short) in keys]
+
+    def fetch_tournament_rosters(
+        self, teams: Iterable[str], since: date
+    ) -> list[LeaguepediaTournamentPlayer]:
+        self.since = since
+        keys = {normalize(name) for name in teams}
+        return [
+            r
+            for r in self.registrations
+            if normalize(r.team) in keys and r.start is not None and r.start >= since
+        ]
 
 
 def lolesports_team(team_id: str, name: str, code: str, status: str = "active") -> TeamRecord:
@@ -70,10 +116,11 @@ def test_match_by_name_replaces_the_roster_and_adds_staff() -> None:
         ]
     )
 
-    enriched, stats = enrich_teams(teams, {"BILIBILI GAMING": "BLG"}, wiki)
+    enriched, stats = enrich_teams(teams, {"BILIBILI GAMING": "BLG"}, wiki, today=TODAY)
 
     team = enriched[0]
     assert team.leaguepedia_name == "Bilibili Gaming"
+    assert team.roster_active
     assert [(p.summoner_name, p.role, p.country, p.is_substitute) for p in team.players] == [
         ("Bin", "top", "France", False),
         ("Sub", "mid", None, True),
@@ -83,19 +130,41 @@ def test_match_by_name_replaces_the_roster_and_adds_staff() -> None:
     assert (stats.by_name, stats.by_code, stats.unmatched) == (1, 0, ())
 
 
-def test_match_by_unique_active_code() -> None:
-    teams = [lolesports_team("gen", "Gen.G Esports", "GEN")]
+def test_match_by_unique_active_code_uses_the_page_name() -> None:
+    teams = [lolesports_team("lyon", "LYON", "LYON")]
     wiki = FakeWiki(
-        [wiki_player("Chovy", "Gen.G", "Mid")],
-        [wiki_team("Gen.G", "GEN"), wiki_team("Old Gen", "GEN", disbanded=True)],
+        [wiki_player("Inspired", "LYON (2024 American Team)", "Jungle")],
+        [
+            wiki_team("LYON", "LYON", page="LYON (2024 American Team)"),
+            wiki_team("Lyon Gaming", "LYON", page="Lyon Gaming (2013 Team)", disbanded=True),
+        ],
     )
 
-    enriched, stats = enrich_teams(teams, {"Gen.G Esports": "GEN"}, wiki)
+    enriched, stats = enrich_teams(teams, {"LYON": "LYON"}, wiki, today=TODAY)
 
-    assert enriched[0].leaguepedia_name == "Gen.G"
-    assert [p.summoner_name for p in enriched[0].players] == ["Chovy"]
+    assert enriched[0].leaguepedia_name == "LYON (2024 American Team)"
+    assert [p.summoner_name for p in enriched[0].players] == ["Inspired"]
     assert (stats.by_name, stats.by_code) == (0, 1)
-    assert wiki.player_queries == [["Gen.G Esports"], ["Gen.G"]]
+    assert wiki.player_queries == [["LYON"], ["LYON (2024 American Team)"]]
+
+
+def test_alias_comes_first() -> None:
+    teams = [lolesports_team("tl", "Team Liquid Alienware", "TLAW")]
+    wiki = FakeWiki(
+        [wiki_player("CoreJJ", "Team Liquid", "Support")],
+        [wiki_team("Other", "TLAW")],
+    )
+
+    enriched, stats = enrich_teams(
+        teams,
+        {"Team Liquid Alienware": "TLAW"},
+        wiki,
+        today=TODAY,
+        aliases={"Team Liquid Alienware": "Team Liquid", "Untracked": "Elsewhere"},
+    )
+
+    assert [p.summoner_name for p in enriched[0].players] == ["CoreJJ"]
+    assert (stats.by_alias, stats.by_name, stats.by_code) == (1, 0, 0)
 
 
 def test_ambiguous_code_is_not_matched() -> None:
@@ -105,17 +174,59 @@ def test_ambiguous_code_is_not_matched() -> None:
         [wiki_team("X One", "XX"), wiki_team("X Two", "XX")],
     )
 
-    enriched, stats = enrich_teams(teams, {"X Esports": "XX"}, wiki)
+    enriched, stats = enrich_teams(teams, {"X Esports": "XX"}, wiki, today=TODAY)
 
     assert enriched == teams
     assert stats.unmatched == ("X Esports",)
+
+
+def test_team_without_current_roster_gets_its_last_tournament_roster() -> None:
+    teams = [lolesports_team("jl", "Joblife", "JL")]
+    wiki = FakeWiki(
+        registrations=[
+            registration("Ragner", "Joblife", "Top,Bot", "LFL Summer", "2026-07-21", "2026-08-06"),
+            registration("Vertigo", "Joblife", "Top", "LFL Summer", "2026-07-21", "2026-08-06"),
+            registration("Ragner", "Joblife", "Top", "LFL Playoffs", "2026-08-12", "2026-09-02"),
+            registration("Kofte", "Joblife", "Mid", "LFL Playoffs", "2026-08-12", "2026-09-02"),
+            registration("Arkhe", "Joblife", "Coach", "LFL Playoffs", "2026-08-12", "2026-09-02"),
+        ]
+    )
+
+    enriched, stats = enrich_teams(teams, {"Joblife": "JL"}, wiki, today=TODAY)
+
+    team = enriched[0]
+    assert not team.roster_active
+    assert team.roster_tournament == "LFL Playoffs"
+    assert team.roster_date == date(2026, 9, 2)
+    assert [(p.summoner_name, p.role, p.country) for p in team.players] == [
+        ("Ragner", "top", "Turkey"),
+        ("Kofte", "mid", "Turkey"),
+    ]
+    assert [(s.name, s.role) for s in team.staff] == [("Arkhe", "Coach")]
+    assert stats.last_known == 1
+    assert wiki.since == date(2025, 10, 1)
+
+
+def test_old_or_staff_only_tournaments_are_not_used() -> None:
+    teams = [lolesports_team("jl", "Joblife", "JL")]
+    wiki = FakeWiki(
+        registrations=[
+            registration("Ragner", "Joblife", "Top", "LFL 2024", "2024-01-10"),
+            registration("Arkhe", "Joblife", "Coach", "LFL Playoffs", "2026-08-12"),
+        ]
+    )
+
+    enriched, stats = enrich_teams(teams, {"Joblife": "JL"}, wiki, today=TODAY)
+
+    assert enriched == teams
+    assert stats.unmatched == ("Joblife",)
 
 
 def test_team_without_wiki_players_keeps_its_roster() -> None:
     teams = [lolesports_team("kc", "Karmine Corp", "KC")]
     wiki = FakeWiki([wiki_player("Coach1", "Karmine Corp", "Coach")])
 
-    enriched, _ = enrich_teams(teams, {"Karmine Corp": "KC"}, wiki)
+    enriched, _ = enrich_teams(teams, {"Karmine Corp": "KC"}, wiki, today=TODAY)
 
     assert [p.summoner_name for p in enriched[0].players] == ["OldMid"]
     assert [s.name for s in enriched[0].staff] == ["Coach1"]
@@ -126,7 +237,7 @@ def test_only_the_best_homonym_is_enriched() -> None:
     pro = lolesports_team("pro", "Alliance", "ALL")
     wiki = FakeWiki([wiki_player("Star", "Alliance", "Top")])
 
-    enriched, _ = enrich_teams([old, pro], {"Alliance": "ALL"}, wiki)
+    enriched, _ = enrich_teams([old, pro], {"Alliance": "ALL"}, wiki, today=TODAY)
 
     assert enriched[0] == old
     assert [p.summoner_name for p in enriched[1].players] == ["Star"]
@@ -136,7 +247,7 @@ def test_untracked_teams_are_untouched() -> None:
     teams = [lolesports_team("kc", "Karmine Corp", "KC"), lolesports_team("g2", "G2", "G2")]
     wiki = FakeWiki([wiki_player("Caps", "G2", "Mid")])
 
-    enriched, _ = enrich_teams(teams, {"Karmine Corp": "KC"}, wiki)
+    enriched, _ = enrich_teams(teams, {"Karmine Corp": "KC"}, wiki, today=TODAY)
 
     assert enriched[1] == teams[1]
 
@@ -145,6 +256,22 @@ def test_untracked_teams_are_untouched() -> None:
 def test_unmatched_teams_are_reported(code: str) -> None:
     teams = [lolesports_team("x", "Nowhere", code)]
 
-    _, stats = enrich_teams(teams, {"Nowhere": code}, FakeWiki([]))
+    _, stats = enrich_teams(teams, {"Nowhere": code}, FakeWiki(), today=TODAY)
 
     assert stats.unmatched == ("Nowhere",)
+
+
+def test_staff_only_page_prefers_the_last_tournament_roster() -> None:
+    teams = [lolesports_team("jl", "Joblife", "JL")]
+    wiki = FakeWiki(
+        [wiki_player("Arkhe", "Joblife", "Coach")],
+        registrations=[
+            registration("Kofte", "Joblife", "Mid", "LFL Playoffs", "2026-08-12", "2026-09-02"),
+        ],
+    )
+
+    enriched, stats = enrich_teams(teams, {"Joblife": "JL"}, wiki, today=TODAY)
+
+    assert not enriched[0].roster_active
+    assert [p.summoner_name for p in enriched[0].players] == ["Kofte"]
+    assert stats.last_known == 1

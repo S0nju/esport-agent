@@ -1,4 +1,5 @@
 from collections.abc import Mapping
+from datetime import date
 from typing import Any
 
 import pytest
@@ -245,16 +246,54 @@ def test_make_client_logs_in_with_the_bot_password(monkeypatch: pytest.MonkeyPat
 def test_fetch_teams_by_short() -> None:
     api = FakeApi(
         page(
-            {"Name": "Gen.G", "Short": "GEN", "IsDisbanded": "0"},
-            {"Name": "Old Team", "Short": None, "IsDisbanded": "1"},
+            {"Page": "Gen.G", "Name": "Gen.G", "Short": "GEN", "IsDisbanded": "0"},
+            {"Page": "Old Team (2013)", "Name": "Old Team", "Short": None, "IsDisbanded": "1"},
         )
     )
     client, _ = make_client(api)
 
     teams = client.fetch_teams_by_short(["GEN", "GEN", "JDG"])
 
-    assert [(t.name, t.short, t.is_disbanded) for t in teams] == [
-        ("Gen.G", "GEN", False),
-        ("Old Team", "", True),
+    assert [(t.page, t.name, t.short, t.is_disbanded) for t in teams] == [
+        ("Gen.G", "Gen.G", "GEN", False),
+        ("Old Team (2013)", "Old Team", "", True),
     ]
+    assert api.calls[0]["fields"] == "_pageName=Page,Name,Short,IsDisbanded"
     assert api.calls[0]["where"] == 'Short IN ("GEN", "JDG")'
+
+
+def test_fetch_tournament_rosters_joins_tournaments() -> None:
+    api = FakeApi(
+        page(
+            {
+                "Team": "Joblife",
+                "Player": "Ragner",
+                "Role": "Top,Bot",
+                "Country": "Turkey",
+                "Tournament": "LFL 2026 Summer Playoffs",
+                "DateStart": "2026-08-12",
+                "DateEnd": "2026-09-02",
+                "DateStart__precision": "1",
+            },
+            {
+                "Team": "Joblife",
+                "Player": "Arkhe",
+                "Role": "Coach",
+                "Country": "",
+                "Tournament": "LFL 2026 Summer Playoffs",
+                "DateStart": "2026-08-12",
+                "DateEnd": "",
+            },
+        )
+    )
+    client, _ = make_client(api)
+
+    rows = client.fetch_tournament_rosters(["Joblife"], since=date(2025, 10, 1))
+
+    assert [(r.player, r.role, r.country, r.end) for r in rows] == [
+        ("Ragner", "Top,Bot", "Turkey", date(2026, 9, 2)),
+        ("Arkhe", "Coach", None, None),
+    ]
+    call = api.calls[0]
+    assert call["join_on"] == "TP.OverviewPage=T.OverviewPage"
+    assert call["where"] == 'TP.Team IN ("Joblife") AND T.DateStart >= "2025-10-01"'

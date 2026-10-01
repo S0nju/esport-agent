@@ -9,9 +9,10 @@ Usage: `uv run python -m esport_agent.sync`
 
 import logging
 import sqlite3
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from contextlib import closing
 from dataclasses import dataclass
+from datetime import date
 
 import httpx
 
@@ -130,6 +131,7 @@ def run_sync(
     client: LolesportsClient,
     league_slugs: Sequence[str],
     rosters: RosterSource | None = None,
+    aliases: Mapping[str, str] | None = None,
 ) -> SyncStats:
     """Fetch teams and the schedule of `league_slugs`, then write them in one transaction.
 
@@ -152,7 +154,7 @@ def run_sync(
             logger.info("Fetched schedule of %s", slug)
     matches = {match.id: match for records in schedules.values() for match in records}
     if rosters is not None:
-        teams = enrich_rosters(teams, matches.values(), rosters)
+        teams = enrich_rosters(teams, matches.values(), rosters, aliases)
 
     deleted = 0
     with conn:
@@ -175,7 +177,11 @@ def run_sync(
 
 
 def enrich_rosters(
-    teams: list[TeamRecord], matches: Iterable[MatchRecord], rosters: RosterSource
+    teams: list[TeamRecord],
+    matches: Iterable[MatchRecord],
+    rosters: RosterSource,
+    aliases: Mapping[str, str] | None = None,
+    today: date | None = None,
 ) -> list[TeamRecord]:
     """Enrich the rosters of the teams playing in `matches`, or keep them on any failure."""
     tracked: dict[str, str] = {}
@@ -184,18 +190,23 @@ def enrich_rosters(
             if side.name != "TBD":
                 tracked[side.name] = side.code
     try:
-        enriched, stats = enrich_teams(teams, tracked, rosters)
+        enriched, stats = enrich_teams(
+            teams, tracked, rosters, today=today or date.today(), aliases=aliases
+        )
     except Exception:
         # Leaguepedia is a bonus: a failure (rate limit, network, format) must not
         # prevent the lolesports data from being synced.
         logger.exception("Leaguepedia rosters unavailable, keeping the lolesports rosters")
         return teams
     logger.info(
-        "Leaguepedia rosters: %d teams matched by name, %d by code, %d unmatched (%s)",
+        "Leaguepedia rosters: %d teams matched by alias, %d by name, %d by code (%d of them"
+        " with a last known roster only), %d unmatched: %s",
+        stats.by_alias,
         stats.by_name,
         stats.by_code,
+        stats.last_known,
         len(stats.unmatched),
-        ", ".join(stats.unmatched),
+        ", ".join(stats.unmatched) or "none",
     )
     return enriched
 
@@ -227,7 +238,9 @@ def main() -> None:
         init_schema(conn)
         client = LolesportsClient(http, api_key)
         rosters = make_roster_source(settings)
-        stats = run_sync(conn, client, settings.lolesports_leagues, rosters)
+        stats = run_sync(
+            conn, client, settings.lolesports_leagues, rosters, settings.leaguepedia_team_aliases
+        )
     logger.info(
         "Synced %d teams and %d matches into %s", stats.teams, stats.matches, settings.sqlite_path
     )

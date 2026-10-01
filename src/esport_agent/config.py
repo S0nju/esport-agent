@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     preferred_leagues: list[str] = ["lec"]
     """lolesports league slugs, by priority. When a partial team name matches several teams
     ("Vitality"), the one playing in the first of these leagues is picked."""
+    leaguepedia_team_aliases: dict[str, str] = {}
+    """lolesports team name -> Leaguepedia page name, for teams no rule can match (e.g.
+    {"Team Liquid Alienware": "Team Liquid"}). Checked before any automatic rule."""
     timezone: str = "Europe/Paris"
     """IANA time zone used to show match times and today's date to the agent."""
     log_level: str | None = None
