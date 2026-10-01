@@ -6,6 +6,7 @@ the server says `ratelimited`, and handles pagination itself (mwrogue's own pagi
 fires page requests back to back). It is only called by `sync.py`, never by the tools.
 """
 
+import html
 import logging
 import time
 from collections.abc import Callable, Iterable, Mapping
@@ -56,6 +57,8 @@ class _CargoResponse(_Model):
 class LeaguepediaPlayer(_Model):
     """A row of the `Players` table: a player or a staff member of a team."""
 
+    page: str = Field(alias="Page")
+    """Unique page name, which `RosterChanges` uses: "Castle (Cho Hyeon-seong)"."""
     id: str = Field(alias="ID")
     """In-game name, as shown on the wiki."""
     name: str = Field(alias="Name")
@@ -63,18 +66,11 @@ class LeaguepediaPlayer(_Model):
     role: str = Field(alias="Role")
     """Top, Jungle, Mid, Bot, Support for players; Coach, Analyst, Manager... for staff."""
     country: str | None = Field(alias="Country")
-    is_substitute: bool = Field(alias="IsSubstitute")
 
     @field_validator("country", mode="before")
     @classmethod
     def _empty_as_none(cls, value: object) -> object:
         return value or None
-
-    @field_validator("is_substitute", mode="before")
-    @classmethod
-    def _cargo_boolean(cls, value: object) -> bool:
-        # Cargo booleans are "1", "0" or empty (unknown, mostly for staff).
-        return value == "1"
 
 
 class LeaguepediaTeam(_Model):
@@ -103,6 +99,10 @@ class LeaguepediaTournamentPlayer(_Model):
 
     team: str = Field(alias="Team")
     player: str = Field(alias="Player")
+    """Page name of the player: "Maru (Lee Sang-hun)"."""
+    name: str = Field(alias="DisplayName")
+    """In-game name from the player's page ("Maru"), empty if the page is missing."""
+    real_name: str = Field(alias="RealName")
     role: str = Field(alias="Role")
     """Top, Jungle, Mid, Bot, Support, Coach...; a player who switched lanes has "Top,Bot"."""
     country: str | None = Field(alias="Country")
@@ -114,6 +114,44 @@ class LeaguepediaTournamentPlayer(_Model):
     @classmethod
     def _empty_as_none(cls, value: object) -> object:
         return value or None
+
+    @field_validator("name", "real_name", mode="before")
+    @classmethod
+    def _empty_as_blank(cls, value: object) -> object:
+        return value or ""
+
+    @property
+    def display_name(self) -> str:
+        return self.name or self.player
+
+
+class LeaguepediaRosterJoin(_Model):
+    """A player or staff member joining a team, from the `RosterChanges` table.
+
+    The `Players` table has an `IsSubstitute` field, but the wiki never fills it: whether a
+    player is a substitute or inactive is only recorded on their roster changes. A change of
+    status (a substitute promoted, a starter benched) is recorded as a new join.
+    """
+
+    player: str = Field(alias="Player")
+    """Page name of the player, as in `LeaguepediaPlayer.page`."""
+    team: str = Field(alias="Team")
+    joined: date | None = Field(alias="Date")
+    role_modifier: str = Field(alias="RoleModifier")
+    """"Sub" for a substitute, empty otherwise."""
+    status: str = Field(alias="Status")
+    """Empty, or "inactive", "temp_sub", "official_sub", "loaned_out", "on_loan", "trial"..."""
+
+    @field_validator("joined", mode="before")
+    @classmethod
+    def _date_part(cls, value: object) -> object:
+        # Cargo datetimes look like "2026-09-08 00:00:00".
+        return value[:10] if isinstance(value, str) and value else None
+
+    @field_validator("role_modifier", "status", mode="before")
+    @classmethod
+    def _empty_as_blank(cls, value: object) -> object:
+        return value or ""
 
 
 class LeaguepediaClient:
@@ -150,7 +188,7 @@ class LeaguepediaClient:
         rows: list[dict[str, str | None]] = []
         while True:
             page = self._request({**params, "limit": PAGE_SIZE, "offset": len(rows)})
-            rows.extend(row.title for row in page.cargoquery)
+            rows.extend(_decoded(row.title) for row in page.cargoquery)
             # The server may cap pages below PAGE_SIZE: a page is the last one only if it
             # is shorter than what the server allows, otherwise results would be truncated.
             page_cap = min(PAGE_SIZE, page.limits.cargoquery) if page.limits else PAGE_SIZE
@@ -165,7 +203,7 @@ class LeaguepediaClient:
             chunk = names[start : start + TEAMS_PER_QUERY]
             rows = self.query(
                 "Players",
-                ["ID", "Name", "Team", "Role", "Country", "IsSubstitute"],
+                ["_pageName=Page", "ID", "Name", "Team", "Role", "Country"],
                 where=f"Team IN ({', '.join(cargo_quote(name) for name in chunk)})",
                 order_by="Team, ID",
             )
@@ -200,17 +238,20 @@ class LeaguepediaClient:
         for start in range(0, len(names), TEAMS_PER_QUERY):
             chunk = names[start : start + TEAMS_PER_QUERY]
             rows = self.query(
-                "TournamentPlayers=TP, Tournaments=T",
+                "TournamentPlayers=TP, Tournaments=T, Players=P",
                 [
                     "TP.Team=Team",
                     "TP.Link=Player",
+                    "P.ID=DisplayName",
+                    "P.Name=RealName",
                     "TP.Role=Role",
                     "TP.Flag=Country",
                     "T.Name=Tournament",
                     "T.DateStart=DateStart",
                     "T.Date=DateEnd",
                 ],
-                join_on="TP.OverviewPage=T.OverviewPage",
+                # Cargo joins are left joins: a player without a page keeps its row.
+                join_on="TP.OverviewPage=T.OverviewPage, TP.Link=P._pageName",
                 where=(
                     f"TP.Team IN ({', '.join(cargo_quote(name) for name in chunk)})"
                     f" AND T.DateStart >= {cargo_quote(since.isoformat())}"
@@ -221,6 +262,24 @@ class LeaguepediaClient:
                 _validate(LeaguepediaTournamentPlayer, row, "TournamentPlayers") for row in rows
             )
         return rows_out
+
+    def fetch_roster_joins(self, teams: Iterable[str]) -> list[LeaguepediaRosterJoin]:
+        """Return every join recorded for `teams`, most recent first."""
+        names = sorted(set(teams))
+        joins: list[LeaguepediaRosterJoin] = []
+        for start in range(0, len(names), TEAMS_PER_QUERY):
+            chunk = names[start : start + TEAMS_PER_QUERY]
+            rows = self.query(
+                "RosterChanges",
+                ["Date_Sort=Date", "Player", "Team", "RoleModifier", "Status"],
+                where=(
+                    f"Team IN ({', '.join(cargo_quote(name) for name in chunk)})"
+                    ' AND Direction = "Join"'
+                ),
+                order_by="Date_Sort DESC, Team, Player",
+            )
+            joins.extend(_validate(LeaguepediaRosterJoin, row, "RosterChanges") for row in rows)
+        return joins
 
     def _request(self, params: Mapping[str, str | int]) -> _CargoResponse:
         for attempt in range(MAX_RATE_LIMIT_RETRIES + 1):
@@ -250,6 +309,14 @@ class LeaguepediaClient:
                 self._sleep(wait)
                 now += wait
         self._last_request = now
+
+
+def _decoded(row: Mapping[str, str | None]) -> dict[str, str | None]:
+    """Decode the HTML entities Cargo leaves in values: "Ian&nbsp;Victor" -> "Ian Victor"."""
+    return {
+        key: html.unescape(value).replace("\xa0", " ") if value else value
+        for key, value in row.items()
+    }
 
 
 def cargo_quote(value: str) -> str:

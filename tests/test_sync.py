@@ -15,6 +15,7 @@ from esport_agent.data import leaguepedia
 from esport_agent.data.leaguepedia import (
     LeaguepediaError,
     LeaguepediaPlayer,
+    LeaguepediaRosterJoin,
     LeaguepediaTeam,
     LeaguepediaTournamentPlayer,
 )
@@ -261,12 +262,12 @@ class FakeRosters:
         return [
             LeaguepediaPlayer.model_validate(
                 {
+                    "Page": player_id,
                     "ID": player_id,
                     "Name": f"{player_id} Real",
                     "Team": "Karmine Corp",
                     "Role": role,
                     "Country": "France",
-                    "IsSubstitute": "0",
                 }
             )
             for player_id, role in rows
@@ -274,6 +275,9 @@ class FakeRosters:
         ]
 
     def fetch_teams_by_short(self, codes: Iterable[str]) -> list[LeaguepediaTeam]:
+        return []
+
+    def fetch_roster_joins(self, teams: Iterable[str]) -> list[LeaguepediaRosterJoin]:
         return []
 
     def fetch_tournament_rosters(
