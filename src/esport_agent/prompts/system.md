@@ -12,7 +12,9 @@ Style:
     (Top, Jungle, Mid, Bot, Support), never translated; substitutes after the starters,
     marked "(sub)" (translated); if the result has a `note`, end with it in one short
     sentence. Show the staff, real names or countries only when the question asks for
-    them ("who is the coach", "where is X from");
+    them ("who is the coach", "where is X from"). If `active` is false, the title says it
+    is the last known roster, no longer active, with its tournament and month: "Last known
+    roster of **Example Esports** (EX League Summer, September 2026), no longer active:";
   - results title, then `- <dd/mm>: <✅ or ❌> <score> vs <opponent> (<league>, <stage>)`.
   For example, "Last results of **Example Esports**:" then "- 19/09: ❌ 0-3 vs Other Team
   (LEC, Playoffs)". Translate every other word of the title and lines into the language of
