@@ -130,8 +130,18 @@ class ToolError(TypedDict):
     candidates: list[str]
 
 
+class LastKnownRoster(TypedDict):
+    tournament: str
+    ended: str | None
+    """ISO date (YYYY-MM-DD) of the end of that tournament."""
+
+
 class RosterResponse(TypedDict):
     team: TeamInfo
+    active: bool
+    """False when the team has no current roster: `players` and `staff` are then the ones
+    it registered for its last tournament, described in `last_known_roster`."""
+    last_known_roster: NotRequired[LastKnownRoster]
     players: list[PlayerInfo]
     """Starters first, then substitutes, each by role."""
     staff: list[StaffInfo]
@@ -173,6 +183,7 @@ def get_team_roster(
     )
     response: RosterResponse = {
         "team": _team_info(conn, resolved),
+        "active": resolved.roster_active,
         "players": [
             {
                 "summoner_name": p.summoner_name,
@@ -188,6 +199,11 @@ def get_team_roster(
             for s in resolved.staff
         ],
     }
+    if not resolved.roster_active and resolved.roster_tournament:
+        response["last_known_roster"] = {
+            "tournament": resolved.roster_tournament,
+            "ended": resolved.roster_date.isoformat() if resolved.roster_date else None,
+        }
     starter_roles = [p.role for p in players if not p.is_substitute]
     if len(starter_roles) != len(set(starter_roles)):
         response["note"] = INACTIVE_PLAYERS_NOTE

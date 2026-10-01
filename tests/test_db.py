@@ -272,3 +272,19 @@ def test_teams_keep_staff_countries_and_substitutes(conn: sqlite3.Connection) ->
         ("Sub", None, True),
     }
     assert found[0].staff == (StaffRecord("Reapered", "Bok Han-gyu", "Coach", None),)
+
+
+def test_find_teams_prefers_an_exact_name_over_a_shared_code(conn: sqlite3.Connection) -> None:
+    academy = make_team(
+        "academy",
+        tuple(make_player(f"p{i}") for i in range(8)),
+        name="Lyon Academy",
+        code="LYON",
+    )
+    main = make_team("main", (make_player("p0"),), name="LYON", code="LYON")
+    replace_teams(conn, [academy, main])
+
+    teams, exact = find_teams(conn, "lyon")
+
+    assert exact
+    assert [t.name for t in teams] == ["LYON", "Lyon Academy"]

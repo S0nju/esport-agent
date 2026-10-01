@@ -2,6 +2,7 @@ import json
 import logging
 import sqlite3
 from collections.abc import Callable, Iterable
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -11,7 +12,12 @@ import pytest
 from esport_agent import sync
 from esport_agent.config import Settings
 from esport_agent.data import leaguepedia
-from esport_agent.data.leaguepedia import LeaguepediaError, LeaguepediaPlayer, LeaguepediaTeam
+from esport_agent.data.leaguepedia import (
+    LeaguepediaError,
+    LeaguepediaPlayer,
+    LeaguepediaTeam,
+    LeaguepediaTournamentPlayer,
+)
 from esport_agent.data.lolesports import Event, LolesportsClient, Team
 from esport_agent.sync import run_sync, to_match_record, to_team_records
 
@@ -270,6 +276,11 @@ class FakeRosters:
     def fetch_teams_by_short(self, codes: Iterable[str]) -> list[LeaguepediaTeam]:
         return []
 
+    def fetch_tournament_rosters(
+        self, teams: Iterable[str], since: date
+    ) -> list[LeaguepediaTournamentPlayer]:
+        return []
+
 
 def test_run_sync_enriches_rosters_of_teams_with_matches(conn: sqlite3.Connection) -> None:
     rosters = FakeRosters()
@@ -320,3 +331,16 @@ def test_make_roster_source_survives_a_failed_login(
     with caplog.at_level(logging.ERROR):
         assert sync.make_roster_source(settings) is None
     assert "Leaguepedia login failed" in caplog.text
+
+
+def test_run_sync_passes_the_aliases(conn: sqlite3.Connection) -> None:
+    class AliasWiki(FakeRosters):
+        def fetch_players(self, teams: Iterable[str]) -> list[LeaguepediaPlayer]:
+            self.asked.extend(teams)
+            return []
+
+    rosters = AliasWiki()
+
+    run_sync(conn, make_client(), ["lec"], rosters, {"Karmine Corp": "KC Wiki Page"})
+
+    assert "KC Wiki Page" in rosters.asked

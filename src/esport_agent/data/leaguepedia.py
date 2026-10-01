@@ -9,6 +9,7 @@ fires page requests back to back). It is only called by `sync.py`, never by the 
 import logging
 import time
 from collections.abc import Callable, Iterable, Mapping
+from datetime import date
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
@@ -79,6 +80,9 @@ class LeaguepediaPlayer(_Model):
 class LeaguepediaTeam(_Model):
     """A row of the `Teams` table."""
 
+    page: str = Field(alias="Page")
+    """Unique page name, which other tables use to refer to the team. It can differ from
+    the displayed name: "LYON (2024 American Team)" is displayed "LYON"."""
     name: str = Field(alias="Name")
     short: str = Field(alias="Short")
     is_disbanded: bool = Field(alias="IsDisbanded")
@@ -92,6 +96,24 @@ class LeaguepediaTeam(_Model):
     @classmethod
     def _cargo_boolean(cls, value: object) -> bool:
         return value == "1"
+
+
+class LeaguepediaTournamentPlayer(_Model):
+    """A player or staff member registered by a team for a tournament."""
+
+    team: str = Field(alias="Team")
+    player: str = Field(alias="Player")
+    role: str = Field(alias="Role")
+    """Top, Jungle, Mid, Bot, Support, Coach...; a player who switched lanes has "Top,Bot"."""
+    country: str | None = Field(alias="Country")
+    tournament: str = Field(alias="Tournament")
+    start: date | None = Field(alias="DateStart")
+    end: date | None = Field(alias="DateEnd")
+
+    @field_validator("country", "start", "end", mode="before")
+    @classmethod
+    def _empty_as_none(cls, value: object) -> object:
+        return value or None
 
 
 class LeaguepediaClient:
@@ -115,9 +137,12 @@ class LeaguepediaClient:
         fields: Iterable[str],
         where: str | None = None,
         order_by: str | None = None,
+        join_on: str | None = None,
     ) -> list[dict[str, str | None]]:
         """Return every row matching the query, one paced request per page."""
         params: dict[str, str | int] = {"tables": tables, "fields": ",".join(fields)}
+        if join_on:
+            params["join_on"] = join_on
         if where:
             params["where"] = where
         if order_by:
@@ -155,12 +180,47 @@ class LeaguepediaClient:
             chunk = unique[start : start + TEAMS_PER_QUERY]
             rows = self.query(
                 "Teams",
-                ["Name", "Short", "IsDisbanded"],
+                ["_pageName=Page", "Name", "Short", "IsDisbanded"],
                 where=f"Short IN ({', '.join(cargo_quote(code) for code in chunk)})",
                 order_by="Name",
             )
             teams.extend(_validate(LeaguepediaTeam, row, "Teams") for row in rows)
         return teams
+
+    def fetch_tournament_rosters(
+        self, teams: Iterable[str], since: date
+    ) -> list[LeaguepediaTournamentPlayer]:
+        """Return who `teams` registered for the tournaments started since `since`.
+
+        Used for the last known roster of teams that have no current roster on the wiki
+        (between seasons, or after their players left).
+        """
+        names = sorted(set(teams))
+        rows_out: list[LeaguepediaTournamentPlayer] = []
+        for start in range(0, len(names), TEAMS_PER_QUERY):
+            chunk = names[start : start + TEAMS_PER_QUERY]
+            rows = self.query(
+                "TournamentPlayers=TP, Tournaments=T",
+                [
+                    "TP.Team=Team",
+                    "TP.Link=Player",
+                    "TP.Role=Role",
+                    "TP.Flag=Country",
+                    "T.Name=Tournament",
+                    "T.DateStart=DateStart",
+                    "T.Date=DateEnd",
+                ],
+                join_on="TP.OverviewPage=T.OverviewPage",
+                where=(
+                    f"TP.Team IN ({', '.join(cargo_quote(name) for name in chunk)})"
+                    f" AND T.DateStart >= {cargo_quote(since.isoformat())}"
+                ),
+                order_by="T.DateStart DESC, TP.Team, TP.Link",
+            )
+            rows_out.extend(
+                _validate(LeaguepediaTournamentPlayer, row, "TournamentPlayers") for row in rows
+            )
+        return rows_out
 
     def _request(self, params: Mapping[str, str | int]) -> _CargoResponse:
         for attempt in range(MAX_RATE_LIMIT_RETRIES + 1):

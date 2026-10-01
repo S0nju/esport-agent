@@ -34,7 +34,9 @@ TOOLS: list[ToolParam] = [
             "real name, role, country, substitute flag) and staff (coaches, analysts, "
             "managers, owner, with their country). Use it for any question about the team's "
             "players, coaches or staff. A note is added when the source lists several "
-            "players for a role (substitutes or inactive players)."
+            "players for a role (substitutes or inactive players). When the team has no "
+            "current roster, active is false and the last known roster is returned, with "
+            "the tournament it comes from."
         ),
         "input_schema": {
             "type": "object",

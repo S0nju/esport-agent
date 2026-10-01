@@ -26,6 +26,13 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         )
         """,
     ),
+    # 2. Last known rosters: a team whose current roster is empty on Leaguepedia keeps the
+    # one it registered for its last tournament, flagged as no longer active.
+    (
+        "ALTER TABLE teams ADD COLUMN roster_active INTEGER NOT NULL DEFAULT 1",
+        "ALTER TABLE teams ADD COLUMN roster_tournament TEXT",
+        "ALTER TABLE teams ADD COLUMN roster_date TEXT",
+    ),
 )
 
 

@@ -1,7 +1,7 @@
 import json
 import sqlite3
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -470,3 +470,26 @@ def test_roster_gives_real_names_countries_substitutes_and_staff(db: sqlite3.Con
         {"name": "Reapered", "real_name": "Bok Han-gyu", "role": "Coach", "country": None}
     ]
     assert "note" not in result  # A substitute is not a duplicated role.
+
+
+def test_roster_flags_a_last_known_roster(db: sqlite3.Connection) -> None:
+    team = replace(
+        make_team("jl", (make_player("Kofte", "mid"),), name="Joblife", code="JL"),
+        roster_active=False,
+        roster_tournament="LFL 2026 Summer Playoffs",
+        roster_date=date(2026, 9, 2),
+    )
+    replace_teams(db, [team, make_team("kc", name="Karmine Corp", code="KC")])
+
+    result = get_team_roster(db, "Joblife")
+    current = get_team_roster(db, "KC")
+
+    assert "error" not in result
+    assert result["active"] is False
+    assert result.get("last_known_roster") == {
+        "tournament": "LFL 2026 Summer Playoffs",
+        "ended": "2026-09-02",
+    }
+    assert "error" not in current
+    assert current["active"] is True
+    assert "last_known_roster" not in current

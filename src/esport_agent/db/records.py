@@ -1,7 +1,7 @@
 """Source-agnostic records written to and read from the local database."""
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 
 
 @dataclass(frozen=True)
@@ -38,6 +38,12 @@ class TeamRecord:
     staff: tuple[StaffRecord, ...] = ()
     leaguepedia_name: str | None = None
     """Name of the team on Leaguepedia, when its roster comes from there."""
+    roster_active: bool = True
+    """False for a last known roster: the team has no current roster on Leaguepedia."""
+    roster_tournament: str | None = None
+    """For a last known roster, the tournament it was registered for."""
+    roster_date: date | None = None
+    """For a last known roster, the end date of that tournament."""
 
 
 @dataclass(frozen=True)

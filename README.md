@@ -39,7 +39,8 @@ printed after each answer.
 
 - **Three questions**: current roster and staff (players with their country, substitutes,
   coaches, analysts, managers), next match (or the match being played), latest results with
-  scores from the team's point of view.
+  scores from the team's point of view. Between seasons, a team without a current roster
+  gets its last known one, labelled as no longer active, with the tournament it dates from.
 - **Flexible team names**: full name, short name or code ("Karmine Corp", "KC"). A short
   name shared by several teams resolves to the one playing in the preferred leagues
   ("Vitality" is Team Vitality, not Vitality.Bee); if that does not settle it, the agent
@@ -96,10 +97,15 @@ printed after each answer.
 - **Two sources, one reference per kind of data.** lolesports is fast and unlimited but
   mixes starters, substitutes and inactive players; Leaguepedia has accurate rosters and
   staff but allows about 5 requests per minute. Schedules and results come from lolesports,
-  rosters and staff from Leaguepedia. Teams are matched by name (ignoring case and
-  accents), then by short code only when a single active team uses it: an ambiguous team is
-  left unmatched and keeps its lolesports roster, since a wrong match would show another
-  team's players. If Leaguepedia is unavailable, the sync still completes.
+  rosters and staff from Leaguepedia. Teams are matched through a configurable alias first,
+  then by name (ignoring case and accents), then by short code only when a single active
+  team uses it: an ambiguous team is left unmatched and keeps its lolesports roster, since a
+  wrong match would show another team's players. If Leaguepedia is unavailable, the sync
+  still completes.
+- **Data with its date.** A roster is true at a given time. When a team has no current
+  roster (between seasons), the agent shows the one it registered for its last tournament,
+  says it is no longer active and when it dates from, instead of hiding it or passing it
+  off as current.
 - **Nothing team-specific in the code.** The default team, preferred leagues, synced leagues
   and time zone are settings: Karmine Corp is only the default value.
 - **Controlled costs.** Claude Haiku 4.5 by default, usage and cost reported per answer, and
@@ -138,6 +144,7 @@ Settings are read from environment variables or `.env` (see `.env.example`).
 | `PREFERRED_LEAGUES` | `["lec"]` | Leagues used to pick a team from a short name. |
 | `TIMEZONE` | `Europe/Paris` | Time zone of match times and of today's date. |
 | `LEAGUEPEDIA_BOT_USERNAME`, `LEAGUEPEDIA_BOT_PASSWORD` | | Leaguepedia bot password (`Special:BotPasswords`). Without it, rosters come from lolesports only. |
+| `LEAGUEPEDIA_TEAM_ALIASES` | `{}` | lolesports team name to Leaguepedia page, for teams no rule can match (the sync logs list them), e.g. `{"Team Liquid Alienware": "Team Liquid"}`. |
 | `SQLITE_PATH` | `esport_agent.db` | Local database file. |
 | `LOG_LEVEL` | `INFO` (sync), `WARNING` (CLI) | `DEBUG` also shows every HTTP request; `INFO` in the CLI shows the tool calls and their cost. |
 | `LOG_FILE` | | Also write logs to this file, rotated at 5 MB (3 old files kept). |

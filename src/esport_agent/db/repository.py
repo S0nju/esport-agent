@@ -2,7 +2,7 @@
 
 import sqlite3
 from collections.abc import Collection, Iterable
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from esport_agent.db.records import (
     MatchRecord,
@@ -24,8 +24,8 @@ def replace_teams(conn: sqlite3.Connection, teams: Iterable[TeamRecord]) -> None
     conn.execute("DELETE FROM teams")
     for team in teams:
         conn.execute(
-            "INSERT INTO teams (id, slug, name, code, status, home_league, leaguepedia_name)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO teams (id, slug, name, code, status, home_league, leaguepedia_name,"
+            " roster_active, roster_tournament, roster_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 team.id,
                 team.slug,
@@ -34,6 +34,9 @@ def replace_teams(conn: sqlite3.Connection, teams: Iterable[TeamRecord]) -> None
                 team.status,
                 team.home_league,
                 team.leaguepedia_name,
+                team.roster_active,
+                team.roster_tournament,
+                team.roster_date.isoformat() if team.roster_date else None,
             ),
         )
         conn.executemany(
@@ -168,10 +171,14 @@ def find_teams(conn: sqlite3.Connection, query: str) -> tuple[list[TeamRecord], 
     `query`. The boolean tells whether the matches are exact.
     """
     query = query.strip()
+    # A team literally named `query` comes before teams that only share its code or slug:
+    # lolesports gives "LYON" and "Lyon Academy" the same code.
     exact = conn.execute(
         "SELECT * FROM teams WHERE name = ? COLLATE NOCASE OR code = ? COLLATE NOCASE"
-        " OR slug = ? COLLATE NOCASE" + _TEAM_RANKING + " LIMIT ?",
-        (query, query, query, MAX_TEAM_CANDIDATES),
+        " OR slug = ? COLLATE NOCASE"
+        + _TEAM_RANKING.replace("ORDER BY", "ORDER BY name = ? COLLATE NOCASE DESC,", 1)
+        + " LIMIT ?",
+        (query, query, query, query, MAX_TEAM_CANDIDATES),
     ).fetchall()
     if exact:
         return [_team_from_row(conn, row) for row in exact], True
@@ -332,6 +339,9 @@ def _team_from_row(conn: sqlite3.Connection, row: sqlite3.Row) -> TeamRecord:
             for s in staff
         ),
         leaguepedia_name=row["leaguepedia_name"],
+        roster_active=bool(row["roster_active"]),
+        roster_tournament=row["roster_tournament"],
+        roster_date=date.fromisoformat(row["roster_date"]) if row["roster_date"] else None,
     )
 
 
