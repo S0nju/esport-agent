@@ -18,7 +18,8 @@ import httpx
 
 from esport_agent.config import MissingSettingError, Settings, get_settings, require_secret
 from esport_agent.data import leaguepedia
-from esport_agent.data.lolesports import Event, LolesportsClient, Team
+from esport_agent.data.leaguepedia import LeaguepediaError
+from esport_agent.data.lolesports import Event, LolesportsClient, LolesportsFormatError, Team
 from esport_agent.db import (
     MatchRecord,
     MatchSide,
@@ -193,10 +194,17 @@ def enrich_rosters(
         enriched, stats = enrich_teams(
             teams, tracked, rosters, today=today or date.today(), aliases=aliases
         )
+    except LeaguepediaError as exc:
+        # Leaguepedia is a bonus: a failure (rate limit, network, format) must not prevent
+        # the lolesports data from being synced. Expected, so one line; details at DEBUG.
+        logger.warning(
+            "Leaguepedia rosters unavailable (%s), keeping the lolesports rosters", _reason(exc)
+        )
+        logger.debug("Leaguepedia error details", exc_info=True)
+        return teams
     except Exception:
-        # Leaguepedia is a bonus: a failure (rate limit, network, format) must not
-        # prevent the lolesports data from being synced.
-        logger.exception("Leaguepedia rosters unavailable, keeping the lolesports rosters")
+        # A bug in the matching code: worth a full traceback, but the sync still completes.
+        logger.exception("Leaguepedia rosters failed, keeping the lolesports rosters")
         return teams
     logger.info(
         "Leaguepedia rosters: %d teams matched by alias, %d by name, %d by code (%d of them"
@@ -221,10 +229,28 @@ def make_roster_source(settings: Settings) -> RosterSource | None:
         return None
     try:
         return leaguepedia.make_client(settings)
-    except Exception:
-        # Same as above: a failed login only means rosters stay as lolesports gives them.
-        logger.exception("Leaguepedia login failed, rosters come from lolesports only")
+    except Exception as exc:
+        # Same as above: a failed login (network, wrong password) only means rosters stay as
+        # lolesports gives them.
+        logger.warning(
+            "Leaguepedia login failed (%s), rosters come from lolesports only", _reason(exc)
+        )
+        logger.debug("Leaguepedia login error details", exc_info=True)
         return None
+
+
+def _reason(exc: BaseException) -> str:
+    """Return the root cause of an error on one line.
+
+    "gaierror: [Errno -2] Name or service not known" says more than the chain of wrappers
+    that a network failure goes through.
+    """
+    root, seen = exc, {id(exc)}
+    while (cause := root.__cause__ or root.__context__) is not None and id(cause) not in seen:
+        root = cause
+        seen.add(id(cause))
+    lines = str(root).splitlines()
+    return f"{type(root).__name__}: {lines[0]}" if lines else type(root).__name__
 
 
 def main() -> None:
@@ -234,16 +260,29 @@ def main() -> None:
         api_key = require_secret(settings.lolesports_api_key, "LOLESPORTS_API_KEY")
     except MissingSettingError as exc:
         raise SystemExit(str(exc)) from exc
-    with (
-        closing(connect(settings.sqlite_path)) as conn,
-        httpx.Client(timeout=HTTP_TIMEOUT_SECONDS) as http,
-    ):
-        init_schema(conn)
-        client = LolesportsClient(http, api_key)
-        rosters = make_roster_source(settings)
-        stats = run_sync(
-            conn, client, settings.lolesports_leagues, rosters, settings.leaguepedia_team_aliases
+    try:
+        with (
+            closing(connect(settings.sqlite_path)) as conn,
+            httpx.Client(timeout=HTTP_TIMEOUT_SECONDS) as http,
+        ):
+            init_schema(conn)
+            client = LolesportsClient(http, api_key)
+            rosters = make_roster_source(settings)
+            stats = run_sync(
+                conn,
+                client,
+                settings.lolesports_leagues,
+                rosters,
+                settings.leaguepedia_team_aliases,
+            )
+    except (httpx.HTTPError, LolesportsFormatError) as exc:
+        # Expected when the network or the API is down: a clear message and a failing exit
+        # code for the scheduler, without a traceback (shown at DEBUG). Nothing was written.
+        logger.error(
+            "lolesports unavailable (%s): sync aborted, the database is unchanged", _reason(exc)
         )
+        logger.debug("lolesports error details", exc_info=True)
+        raise SystemExit(1) from exc
     logger.info(
         "Synced %d teams and %d matches into %s", stats.teams, stats.matches, settings.sqlite_path
     )

@@ -287,9 +287,11 @@ class LeaguepediaClient:
             try:
                 payload = self._api("cargoquery", **params)
             except Exception as exc:
-                # mwclient raises APIError with a `code`; only rate limits are retried.
+                # mwclient raises APIError with a `code`; only rate limits are retried. Any
+                # other failure (network, refused query) becomes a LeaguepediaError, which
+                # callers treat as "Leaguepedia unavailable".
                 if getattr(exc, "code", None) != "ratelimited":
-                    raise
+                    raise LeaguepediaError("Leaguepedia request failed") from exc
                 if attempt == MAX_RATE_LIMIT_RETRIES:
                     raise LeaguepediaError("Still rate limited after several retries") from exc
                 logger.warning("Leaguepedia rate limit, waiting %.0f s", RATE_LIMIT_WAIT_SECONDS)
