@@ -9,6 +9,7 @@ authors = [
 requires-python = ">=3.14"
 dependencies = [
     "anthropic>=1.8.0",
+    "discord-py>=2.7.1",
     "httpx>=0.28.1",
     "mwrogue>=0.1.5",
     "pydantic-settings>=2.15.0",

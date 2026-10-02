@@ -58,7 +58,11 @@ def test_roster_is_sorted_by_role(db: sqlite3.Connection) -> None:
 def test_unknown_team(db: sqlite3.Connection) -> None:
     result = get_team_roster(db, "Fnatic")
 
-    assert result == {"error": "No team matches 'Fnatic'.", "candidates": []}
+    assert result == {
+        "error": "No team matches 'Fnatic'.",
+        "code": "unknown_team",
+        "candidates": [],
+    }
 
 
 def test_ambiguous_partial_name_lists_relevant_candidates(db: sqlite3.Connection) -> None:
@@ -66,6 +70,7 @@ def test_ambiguous_partial_name_lists_relevant_candidates(db: sqlite3.Connection
 
     assert result == {
         "error": "Several teams match 'Karmine': ask the user which one, or pick one.",
+        "code": "ambiguous_team",
         "candidates": ["Karmine Corp (KC, LEC)", "Karmine Corp Blue (KCB, LFL)"],
     }
 
@@ -308,6 +313,7 @@ def test_several_teams_in_the_preferred_league_stay_ambiguous(db: sqlite3.Connec
 
     assert result == {
         "error": "Several teams match 'Karmine': ask the user which one, or pick one.",
+        "code": "ambiguous_team",
         "candidates": ["Karmine Corp (KC, LEC)", "Karmine Corp Blue (KCB, LEC)"],
     }
 
@@ -391,7 +397,11 @@ def test_unknown_league(db: sqlite3.Connection) -> None:
 
     result = get_team_roster(db, "KC", league="Premier League")
 
-    assert result == {"error": "No synced league matches 'Premier League'.", "candidates": []}
+    assert result == {
+        "error": "No synced league matches 'Premier League'.",
+        "code": "unknown_league",
+        "candidates": [],
+    }
 
 
 def test_no_team_of_the_organization_in_the_league(db: sqlite3.Connection) -> None:
@@ -401,7 +411,11 @@ def test_no_team_of_the_organization_in_the_league(db: sqlite3.Connection) -> No
     missing = get_team_roster(db, "KCB", league="lec")
 
     assert "error" not in result
-    assert missing == {"error": "No team matching 'KCB' plays in 'lec'.", "candidates": []}
+    assert missing == {
+        "error": "No team matching 'KCB' plays in 'lec'.",
+        "code": "not_in_league",
+        "candidates": [],
+    }
 
 
 def test_execute_tool_passes_the_league(db: sqlite3.Connection) -> None:

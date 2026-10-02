@@ -131,6 +131,9 @@ class ToolError(TypedDict):
     """Why a tool could not answer, with the teams the user may have meant."""
 
     error: str
+    code: str
+    """unknown_team, ambiguous_team, unknown_league or not_in_league: lets the Discord
+    commands word the error in the user's language without parsing `error`."""
     candidates: list[str]
 
 
@@ -313,7 +316,11 @@ def _resolve(
         return (resolved, set()) if isinstance(resolved, TeamRecord) else resolved
     league_slugs = find_leagues(conn, league)
     if not league_slugs:
-        return {"error": f"No synced league matches {league!r}.", "candidates": []}
+        return {
+            "error": f"No synced league matches {league!r}.",
+            "code": "unknown_league",
+            "candidates": [],
+        }
     resolved = _resolve_team_in_league(conn, team, league, league_slugs)
     return (resolved, league_slugs) if isinstance(resolved, TeamRecord) else resolved
 
@@ -345,9 +352,14 @@ def _resolve_team_in_league(
     if len(candidates) == 1:
         return candidates[0]
     if not candidates:
-        return {"error": f"No team matching {query!r} plays in {league!r}.", "candidates": []}
+        return {
+            "error": f"No team matching {query!r} plays in {league!r}.",
+            "code": "not_in_league",
+            "candidates": [],
+        }
     return {
         "error": f"Several teams match {query!r} in {league!r}: ask the user which one.",
+        "code": "ambiguous_team",
         "candidates": [_describe(conn, t) for t in candidates],
     }
 
@@ -370,7 +382,7 @@ def _resolve_team(
     if len(relevant) == 1:
         return relevant[0]
     if not relevant:
-        return {"error": f"No team matches {query!r}.", "candidates": []}
+        return {"error": f"No team matches {query!r}.", "code": "unknown_team", "candidates": []}
     for league in preferred_leagues:
         in_league = [t for t in relevant if league in team_league_slugs(conn, t.name)]
         if len(in_league) == 1:
@@ -380,6 +392,7 @@ def _resolve_team(
             break
     return {
         "error": f"Several teams match {query!r}: ask the user which one, or pick one.",
+        "code": "ambiguous_team",
         "candidates": [_describe(conn, t) for t in relevant],
     }
 
