@@ -6,9 +6,8 @@
 
 A conversational agent that answers natural-language questions about League of Legends
 esports: a team's roster, its next match, its latest results. It is built on Claude with
-tool calling over a local database kept up to date from the lolesports API. The agent runs
-as a command-line app, and a Discord bot already answers the common questions (roster, next
-match, results) without calling the model.
+tool calling over a local database kept up to date from the lolesports API, and runs as a
+Discord bot (and as a command-line app for local testing).
 
 ## Example
 
@@ -57,7 +56,8 @@ printed after each answer.
   $0.005 per question with Claude Haiku 4.5).
 - **Discord bot**: `/roster`, `/next` and `/results` answer from the database without
   calling the model, so they are free and instant, in the user's Discord language (French or
-  English), with dates shown in each user's own time zone.
+  English), with dates shown in each user's own time zone. `/ask` takes any question and
+  answers it through the agent, within a per-user quota and a daily budget.
 
 ## Architecture
 
@@ -80,7 +80,7 @@ printed after each answer.
 | `agent.py` | The tool-use loop: calls Claude, runs the requested tools, returns the answer with its usage. |
 | `prompts/system.md` | The system prompt, versioned separately from the code. |
 | `cli.py` | Interactive command line, with a `--tools` mode that calls the tools without Claude. |
-| `bot/` | Discord bot: slash commands that call the tools and format their results in the user's language, restricted to an allowlist of servers. |
+| `bot/` | Discord bot: slash commands that call the tools and format their results in the user's language, `/ask` through the agent with its quotas, restricted to an allowlist of servers. |
 
 ## Design choices
 
@@ -121,6 +121,19 @@ printed after each answer.
 - **Controlled costs.** Claude Haiku 4.5 by default, usage and cost reported per answer, and
   for the Discord bot, slash commands that answer common questions without calling the model
   at all.
+- **A spending cap that cannot be exceeded.** Each user gets 5 `/ask` questions over the
+  last 24 hours: each question counts for 24 hours, and when none is left the bot says
+  when the next one comes back ("next question available in 3 hours"). A rolling window
+  works the same in every time zone and cannot be gamed. Questions count whatever their size, since the cost of
+  one is bounded (300-character questions, capped answer length and tool rounds), so the
+  count shown to users stays exact. On top
+  of that, a daily budget in dollars protects the owner whatever the number of users; a
+  question's cost is only known once answered, so each question in progress keeps a
+  reserve of it. The free commands are never limited.
+- **A request history without user ids.** Every command is stored with its answer, tools,
+  tokens, cost and latency, which backs the quotas and shows how the bot is used. Users are
+  stored as a keyed hash (HMAC) of their Discord id, which cannot be traced back without
+  the key, and rows are deleted after 90 days.
 - **A locked-down bot.** It only needs the `guilds` intent (no access to messages), its
   commands are registered on an allowlist of servers and it leaves any other server, it
   never pings anyone, and it escapes the Markdown of the names it quotes. Dates are Discord
@@ -147,7 +160,9 @@ In `--tools` mode, type `help` for the list of tools, then for example
 
 For the Discord bot, create an application on the
 [Discord Developer Portal](https://discord.com/developers/applications), put its bot token
-in `DISCORD_BOT_TOKEN` and the IDs of the allowed servers in `DISCORD_GUILD_IDS`, then
+in `DISCORD_BOT_TOKEN`, the IDs of the allowed servers in `DISCORD_GUILD_IDS` and a random
+secret in `DISCORD_USER_HASH_KEY` (`python -c "import secrets; print(secrets.token_hex(32))"`),
+then
 invite it with the `bot` and `applications.commands` scopes (permissions: Send Messages,
 Embed Links). No privileged intent is needed.
 
@@ -157,7 +172,7 @@ Settings are read from environment variables or `.env` (see `.env.example`).
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | | Required by the agent. |
+| `ANTHROPIC_API_KEY` | | Required by the agent (CLI and `/ask`; without it, the bot only offers the free commands). |
 | `LOLESPORTS_API_KEY` | public key in `.env.example` | Required by the sync. |
 | `CLAUDE_MODEL` | `claude-haiku-4-5-20251001` | Model used by the agent. |
 | `DEFAULT_TEAM` | `Karmine Corp` | Team used when a question names none. |
@@ -171,6 +186,10 @@ Settings are read from environment variables or `.env` (see `.env.example`).
 | `LOG_FILE` | | Also write logs to this file, rotated at 5 MB (3 old files kept). |
 | `DISCORD_BOT_TOKEN` | | Required by the Discord bot. |
 | `DISCORD_GUILD_IDS` | `[]` | Servers allowed to use the bot, as a JSON list of IDs. Required by the bot. |
+| `DISCORD_USER_HASH_KEY` | | Secret key used to pseudonymize users in the request history. Required by the bot. |
+| `ASK_QUESTIONS_PER_USER_PER_DAY` | `5` | `/ask` questions per user over the last 24 hours. |
+| `ASK_DAILY_BUDGET_USD` | `0.50` | Maximum estimated spending of `/ask` per day (from midnight in `TIMEZONE`), all users together. |
+| `REQUEST_RETENTION_DAYS` | `90` | Requests older than this are deleted from the history. |
 
 ## Development
 
@@ -186,8 +205,8 @@ pull requests with a green CI, and dependencies are kept up to date by Dependabo
 
 ## Roadmap
 
-- **Discord bot, part 2**: an `/ask` command for free-text questions through the agent,
-  with per-user quotas, a global daily cap and a request history.
+- **Answer cache**: reuse the answer to a question already asked since the last sync, for
+  a limited time (answers like "tonight" age quickly).
 - **Leaguepedia, part 2**: the French second division (Nexus League) and the full match
   history, beyond what lolesports keeps (2024 onwards).
 
