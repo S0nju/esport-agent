@@ -73,6 +73,7 @@ def test_tool_call_then_answer(conn: sqlite3.Connection, settings: Settings) -> 
         answer = agent.ask("What is the roster?")
 
     assert answer.text == "Here is the roster"
+    assert answer.tools == ("get_team_roster",)
     assert (answer.usage.calls, answer.usage.input_tokens, answer.usage.output_tokens) == (2, 2, 2)
     execute.assert_called_once_with(
         conn, "get_team_roster", {}, ToolContext.from_settings(settings, NOW)
@@ -141,7 +142,9 @@ def test_current_date_is_sent_in_the_configured_time_zone(
 
     system = agent._client.messages.create.call_args.kwargs["system"]  # type: ignore[attr-defined]
     assert system[0]["text"] == load_system_prompt()
-    assert system[1]["text"] == "Current date and time: Friday 2026-10-02 18:30 (UTC+02:00)."
+    assert system[1]["text"] == (
+        "Current date and time: Friday 2026-10-02 18:30 (UTC+02:00). Default team: Karmine Corp."
+    )
 
 
 def test_question_is_followed_by_a_language_reminder(
