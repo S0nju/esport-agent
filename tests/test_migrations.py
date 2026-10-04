@@ -15,6 +15,7 @@ def test_new_database_gets_every_migration(conn: sqlite3.Connection) -> None:
     assert {"country", "is_substitute"} <= set(columns(conn, "players"))
     assert "leaguepedia_name" in columns(conn, "teams")
     assert columns(conn, "staff") == ["team_id", "name", "real_name", "role", "country"]
+    assert {"user_hash", "command", "cost_usd", "error"} <= set(columns(conn, "requests"))
 
 
 def test_existing_database_is_migrated_and_keeps_its_data(tmp_path: Path) -> None:

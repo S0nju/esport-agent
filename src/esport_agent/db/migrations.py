@@ -33,6 +33,30 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         "ALTER TABLE teams ADD COLUMN roster_tournament TEXT",
         "ALTER TABLE teams ADD COLUMN roster_date TEXT",
     ),
+    # 3. History of the Discord requests, which also backs the /ask quotas. Users are
+    # pseudonymized; rows are deleted after the retention period.
+    (
+        """
+        CREATE TABLE requests (
+            id            INTEGER PRIMARY KEY,
+            created_at    TEXT NOT NULL,
+            guild_id      TEXT,
+            user_hash     TEXT NOT NULL,
+            command       TEXT NOT NULL,
+            question      TEXT NOT NULL,
+            answer        TEXT,
+            tools         TEXT NOT NULL DEFAULT '[]',
+            model         TEXT,
+            input_tokens  INTEGER NOT NULL DEFAULT 0,
+            output_tokens INTEGER NOT NULL DEFAULT 0,
+            cost_usd      REAL NOT NULL DEFAULT 0,
+            latency_ms    INTEGER NOT NULL DEFAULT 0,
+            error         TEXT
+        )
+        """,
+        "CREATE INDEX idx_requests_created_at ON requests (created_at)",
+        "CREATE INDEX idx_requests_user ON requests (user_hash, created_at)",
+    ),
 )
 
 
