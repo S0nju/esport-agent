@@ -43,6 +43,14 @@ class Settings(BaseSettings):
     discord_guild_ids: list[int] = []
     """Discord servers allowed to use the bot: its commands are only registered there, and
     it leaves any other server it is added to."""
+    discord_user_hash_key: SecretStr | None = None
+    """Secret key used to pseudonymize Discord users in the request history (HMAC)."""
+    ask_questions_per_user_per_day: int = 5
+    """/ask questions per user over the last 24 hours (answers that called Claude)."""
+    ask_daily_budget_usd: float = 0.50
+    """Maximum estimated Claude spending of /ask per day, all servers and users together."""
+    request_retention_days: int = 90
+    """Requests older than this are deleted from the history."""
 
     @field_validator("timezone")
     @classmethod

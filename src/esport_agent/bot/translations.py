@@ -77,6 +77,34 @@ TEXTS: dict[str, dict[Lang, str]] = {
         "fr": "Ce bot n'est pas disponible sur ce serveur.",
         "en": "This bot is not available on this server.",
     },
+    "ask_footer": {
+        "fr": "Questions restantes : {remaining}/{limit}",
+        "en": "Questions left: {remaining}/{limit}",
+    },
+    "ask_footer_last": {
+        "fr": "Nouvelle question disponible {when}",
+        "en": "Next question available {when}",
+    },
+    "user_quota": {
+        "fr": "Tu n'as plus de questions pour le moment. Nouvelle question disponible {when}. "
+        "/roster, /next et /results restent disponibles.",
+        "en": "You have no questions left for now. Next question available {when}. "
+        "/roster, /next and /results are still available.",
+    },
+    "budget_reached": {
+        "fr": "Le bot a atteint sa limite de questions pour aujourd'hui, réessaie demain. "
+        "/roster, /next et /results restent disponibles.",
+        "en": "The bot has reached its question limit for today, try again tomorrow. "
+        "/roster, /next and /results are still available.",
+    },
+    "ask_in_progress": {
+        "fr": "Ta question précédente est encore en cours, attends sa réponse.",
+        "en": "Your previous question is still being answered, wait for it.",
+    },
+    "ask_failed": {
+        "fr": "Je n'ai pas pu répondre à cette question, réessaie plus tard.",
+        "en": "I could not answer this question, try again later.",
+    },
     "internal_error": {
         "fr": "Une erreur est survenue, réessaie plus tard.",
         "en": "Something went wrong, try again later.",
@@ -97,6 +125,10 @@ COMMAND_TEXTS: dict[str, str] = {
         "Afficher aussi le staff (coachs, analystes, managers)"
     ),
     "Number of results (1 to 10)": "Nombre de résultats (1 à 10)",
+    "Ask a question about League of Legends esports (questions are recorded)": (
+        "Pose une question sur l'esport League of Legends (les questions sont enregistrées)"
+    ),
+    "Your question, e.g. who coaches the team?": "Ta question, par exemple : qui coache l'équipe ?",
 }
 """English descriptions of the slash commands (as written in `app.py`) -> French."""
 

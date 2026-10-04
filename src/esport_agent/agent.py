@@ -37,6 +37,8 @@ class AgentError(RuntimeError):
 class Answer:
     text: str
     usage: Usage
+    tools: tuple[str, ...] = ()
+    """Names of the tools Claude called, in order."""
 
 
 def load_system_prompt() -> str:
@@ -53,8 +55,10 @@ class Agent:
         conn: sqlite3.Connection,
         settings: Settings,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        max_tokens: int = MAX_TOKENS,
     ) -> None:
         self._client = client
+        self._max_tokens = max_tokens
         self._conn = conn
         self._settings = settings
         self._clock = clock
@@ -71,7 +75,12 @@ class Agent:
             {
                 "type": "text",
                 # The UTC offset rather than the zone name, which would hint at a language.
-                "text": f"Current date and time: {now:%A %Y-%m-%d %H:%M} (UTC{now:%:z}).",
+                # The default team is used by the tools, and as the example of off-topic
+                # replies.
+                "text": (
+                    f"Current date and time: {now:%A %Y-%m-%d %H:%M} (UTC{now:%:z}). "
+                    f"Default team: {self._settings.default_team}."
+                ),
             },
         ]
         messages: list[MessageParam] = [
@@ -85,11 +94,12 @@ class Agent:
         ]
         tool_context = ToolContext.from_settings(self._settings, now)
         usage = Usage()
+        tools_called: list[str] = []
 
         for _ in range(MAX_TOOL_ROUNDS + 1):
             response = self._client.messages.create(
                 model=self._settings.claude_model,
-                max_tokens=MAX_TOKENS,
+                max_tokens=self._max_tokens,
                 system=system,
                 tools=TOOLS,
                 messages=messages,
@@ -102,7 +112,7 @@ class Agent:
                     raise AgentError(f"Empty answer (stop_reason={response.stop_reason})", usage)
                 if response.stop_reason != "end_turn":
                     logger.warning("Answer cut short: stop_reason=%s", response.stop_reason)
-                return Answer(text=answer, usage=usage)
+                return Answer(text=answer, usage=usage, tools=tuple(tools_called))
 
             messages.append({"role": "assistant", "content": response.content})
             results: list[ToolResultBlockParam] = []
@@ -110,6 +120,7 @@ class Agent:
                 if block.type != "tool_use":
                     continue
                 logger.info("Tool %s called with %s", block.name, block.input)
+                tools_called.append(block.name)
                 try:
                     content = execute_tool(self._conn, block.name, block.input, tool_context)
                     results.append(
