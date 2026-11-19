@@ -190,6 +190,11 @@ def enrich_rosters(
         for side in (match.team1, match.team2):
             if side.name != "TBD":
                 tracked[side.name] = side.code
+    logger.info(
+        "Fetching Leaguepedia rosters of %d teams (a few minutes: one request every %.0f s)",
+        len(tracked),
+        leaguepedia.MIN_REQUEST_INTERVAL_SECONDS,
+    )
     try:
         enriched, stats = enrich_teams(
             teams, tracked, rosters, today=today or date.today(), aliases=aliases

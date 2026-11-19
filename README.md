@@ -73,7 +73,7 @@ printed after each answer.
 | Module | Role |
 |---|---|
 | `data/` | The only place where HTTP calls are made. `lolesports.py` is a typed client whose responses are validated with pydantic, so a change in the unofficial API fails loudly. `leaguepedia.py` queries the wiki's Cargo tables at its strict rate (one request every 15 s, retries when refused, its own pagination). |
-| `sync.py` | Fetches every team and the schedule of the configured leagues from lolesports, enriches the rosters from Leaguepedia, then writes everything in a single transaction. |
+| `sync.py` | Fetches every team and the schedule of the configured leagues from lolesports, enriches the rosters from Leaguepedia (a few minutes, with one log line per Leaguepedia request), then writes everything in a single transaction. |
 | `rosters.py` | Matches lolesports teams to Leaguepedia teams and merges their rosters, staff and countries. |
 | `db/` | SQLite schema with versioned migrations, source-agnostic records and queries (team search, next match, results). |
 | `tools/` | Tool schemas for Claude and the functions behind them: team name resolution, JSON answers, local times. They only read the database. |

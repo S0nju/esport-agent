@@ -186,7 +186,12 @@ class LeaguepediaClient:
         if order_by:
             params["order_by"] = order_by
         rows: list[dict[str, str | None]] = []
+        page_number = 0
         while True:
+            page_number += 1
+            # One line per request: with one request every 15 s, the sync would otherwise
+            # look stuck for minutes.
+            logger.info("Querying Leaguepedia %s, page %d", tables, page_number)
             page = self._request({**params, "limit": PAGE_SIZE, "offset": len(rows)})
             rows.extend(_decoded(row.title) for row in page.cargoquery)
             # The server may cap pages below PAGE_SIZE: a page is the last one only if it
