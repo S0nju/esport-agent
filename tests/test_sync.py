@@ -302,6 +302,16 @@ def test_run_sync_enriches_rosters_of_teams_with_matches(conn: sqlite3.Connectio
     assert [tuple(row) for row in staff] == [("Reapered", "Coach")]
 
 
+def test_run_sync_announces_the_leaguepedia_step(
+    conn: sqlite3.Connection, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.INFO):
+        run_sync(conn, make_client(), ["lec"], FakeRosters())
+
+    # The schedule fixture has 3 teams with matches (TBD sides are not looked up).
+    assert "Fetching Leaguepedia rosters of 3 teams (a few minutes" in caplog.text
+
+
 def test_run_sync_keeps_lolesports_rosters_when_leaguepedia_fails(
     conn: sqlite3.Connection, caplog: pytest.LogCaptureFixture
 ) -> None:

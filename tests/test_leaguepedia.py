@@ -1,3 +1,4 @@
+import logging
 from collections.abc import Mapping
 from datetime import date
 from typing import Any
@@ -118,6 +119,19 @@ def test_query_follows_pages_capped_by_the_server() -> None:
 
     assert len(rows) == 107
     assert [call["offset"] for call in api.calls] == [0, 50, 100]
+
+
+def test_query_logs_each_page_it_requests(caplog: pytest.LogCaptureFixture) -> None:
+    full_page = page(*({"Name": f"Team {i}"} for i in range(PAGE_SIZE)))
+    client, _ = make_client(FakeApi(full_page, page()))
+
+    with caplog.at_level(logging.INFO, logger="esport_agent.data.leaguepedia"):
+        client.query("Teams", ["Name"])
+
+    assert caplog.messages == [
+        "Querying Leaguepedia Teams, page 1",
+        "Querying Leaguepedia Teams, page 2",
+    ]
 
 
 def test_requests_are_paced() -> None:
