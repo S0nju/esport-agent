@@ -26,13 +26,13 @@ Le roster peut inclure des remplaçants ou des joueurs inactifs.
 
 > What were KC's last 3 results?
 Last results of **Karmine Corp**:
-- 19/09: ❌ 0-3 vs Movistar KOI (LEC, Playoffs)
-- 06/09: ❌ 1-3 vs G2 Esports (LEC, Playoffs)
-- 05/09: ✅ 3-1 vs GIANTX (LEC, Playoffs)
+- 06/11: ❌ 1-3 vs T1 (Worlds, Quarterfinals)
+- 31/10: ✅ 2-0 vs Movistar KOI (Worlds, Swiss)
+- 29/10: ✅ 2-0 vs CTBC Flying Oyster (Worlds, Swiss)
 [claude-haiku-4-5-20251001 · 2 calls · 4,046 in / 177 out tokens · ≈ $0.0049]
 ```
 
-Real output, with data from September 2026. The line in brackets is the usage report
+Real output, with data from November 2026. The line in brackets is the usage report
 printed after each answer.
 
 ## Features
